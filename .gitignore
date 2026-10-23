@@ -1,0 +1,8 @@
+node_modules/
+verification/
+*.log
+
+# Password manager exports and local secrets
+*.csv
+.env
+.env.*

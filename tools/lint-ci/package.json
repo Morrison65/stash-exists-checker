@@ -1,0 +1,9 @@
+{
+  "name": "stash-exists-checker-lint-ci",
+  "private": true,
+  "description": "Pinned stand-in for the Tampermonkey 5.5.1 linter (ESLint 8.32.0 + userscripts plugin) so lint can run without a browser profile",
+  "dependencies": {
+    "eslint": "8.32.0",
+    "eslint-plugin-userscripts": "0.4.0"
+  }
+}

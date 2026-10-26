@@ -10,7 +10,7 @@ Tampermonkey userscript for desktop Chrome that shows, on [app.reptyle.com](http
 
 ## Project map
 
-- `stash-exists-checker.user.js` is the installable userscript. `lookupVideo` (Stash queries and matching) and `norm`/`canonUrl` are exported through the `module.exports` guard for tests.
+- `stash-exists-checker.user.js` is the installable userscript. `lookupVideo` (Stash queries and matching), `norm`/`canonUrl` and the shared log sink (`logPage`, `createLogSink`; `docker-workspace/docs/userscripts.md`) are exported through the `module.exports` guard for tests.
 - Listing cards are queued and checked in batches of four with a 150 ms pause (`pumpCards`); results are cached per title + URL.
 - `test/core.test.cjs` is the only test file (Node's built-in runner). `tools/` holds the two lint entry points copied from `colum-manager`; both read `<package name>.user.js`.
 
@@ -19,7 +19,7 @@ Tampermonkey userscript for desktop Chrome that shows, on [app.reptyle.com](http
 - `npm run check` = `lint` + `test`. `lint` runs the Tampermonkey 5.5.1 ESLint worker from the Windows Chrome profile and fails if that extension version is not installed; it also asserts `@version` equals the runtime `VERSION`.
 - `npm run check:ci` = `lint:ci` + `test` (needs `npm ci --prefix tools/lint-ci` once). `.github/workflows/ci.yml` runs it.
 - Single test file: `node --test test/core.test.cjs`.
-- Releasing: bump `@version`, `VERSION` and `package.json` together (currently 2.0.0), then follow AGENTS.md.
+- Releasing: bump `@version`, `VERSION` and `package.json` together (currently 2.1.0), then follow AGENTS.md.
 
 ## Architecture
 

@@ -80,3 +80,43 @@ test('HTTP errors from Stash count as failures', async () => {
     const res = await lookupVideo({ title: 'Broken', url: 'https://app.reptyle.com/movies/13' });
     assert.match(res.error, /Stash HTTP 500/);
 });
+
+const { logPage, createLogSink } = require('../stash-exists-checker.user.js');
+
+// Shared log sink contract (docker-workspace/docs/userscripts.md); the send stub stands in for GM_xmlhttpRequest.
+test('logPage keeps host and path only', () => {
+    assert.equal(logPage('https://app.reptyle.com/movies/1?r=abc#x'), 'app.reptyle.com/movies/1');
+    assert.equal(logPage('not a url'), '');
+});
+test('log sink batches structured entries and keeps them while the collector is down', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const sent = [];
+    let up = false;
+    const sink = createLogSink({ script: 'test-script', version: '1.2.3', page: () => 'host/path', send: (batch, done) => { if (up) sent.push(...batch); done(up); } });
+    sink.log('info', 'started');
+    sink.log('error', 'lookup failed', 'timeout', { status: 0 });
+    assert.equal(sink.pending(), 2);
+    t.mock.timers.tick(2000);
+    assert.equal(sink.pending(), 2, 'a failed send keeps the batch');
+    up = true;
+    t.mock.timers.tick(5000);
+    assert.equal(sink.pending(), 0);
+    assert.deepEqual(sent.map((e) => [e.level, e.event, e.msg, e.seq]), [['info', 'started', undefined, 1], ['error', 'lookup failed', 'timeout', 2]]);
+    const [first, second] = sent;
+    assert.equal(first.script, 'test-script');
+    assert.equal(first.version, '1.2.3');
+    assert.equal(first.page, 'host/path');
+    assert.equal(first.session, second.session);
+    assert.deepEqual(second.data, { status: 0 });
+    assert.match(first.ts, /^\d{4}-\d\d-\d\dT/);
+});
+test('log sink flushes full batches at once and caps its buffer at 500', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const batches = [];
+    const sink = createLogSink({ script: 's', version: '1', page: () => '', send: (batch, done) => { batches.push(batch.length); done(false); } });
+    for (let i = 0; i < 50; i++) sink.log('debug', 'e' + i);
+    assert.deepEqual(batches, [50], 'the 50th entry sends without waiting');
+    for (let i = 0; i < 600; i++) sink.log('debug', 'more');
+    assert.equal(sink.pending(), 500);
+    assert.deepEqual(batches, [50], 'no request storm while the collector is down');
+});

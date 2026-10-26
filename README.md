@@ -1,6 +1,8 @@
 # stash-exists-checker
 
-Tampermonkey userscript for **desktop Chrome** that shows, on [app.reptyle.com](https://app.reptyle.com), whether a video is already in your local [Stash](https://stashapp.cc) (`http://localhost:9999`). Version **2.0.0**.
+Tampermonkey userscript for **desktop Chrome** that shows, on [app.reptyle.com](https://app.reptyle.com), whether a video is already in your local [Stash](https://stashapp.cc) (`http://localhost:9999`). Version **2.1.0**.
+
+**v2.1.0** sends structured logs (start, every movie-page result, per-batch card counts, an unreachable Stash) to the local userscript log collector on `http://localhost:7790` (see `docker-workspace/docs/userscripts.md`). Nothing else changes: when the collector is not running, up to 500 entries wait in the tab's memory and are retried with backoff, and the badges work as before.
 
 **v2.0.0** is the first release in its own repository. The code was supplied as a Sider code-agent preview (`siderRuntime`), not as a Tampermonkey script, and was ported: `siderRuntime.fetch`/`addStyle` were replaced by `GM_xmlhttpRequest`/`GM_addStyle` with explicit `@connect`/`@grant`; the Sider-only `@bound-url` and `@changelog` headers were dropped. Two latent bugs were fixed: the whitespace normaliser used `/\\s+/` (a literal backslash) so runs of spaces never collapsed, and an unreachable Stash was reported as "Not in Stash" (and cached) instead of "Stash unreachable".
 
@@ -23,7 +25,7 @@ Runs on `https://app.reptyle.com/*` (top frame only).
 
 ## Permissions
 
-- `@connect localhost`: GraphQL calls to `http://localhost:9999/graphql`. Tampermonkey asks once; choose **Always allow**. If your Stash runs elsewhere, change `STASH` in the script and add a matching `@connect`.
+- `@connect localhost`: GraphQL calls to `http://localhost:9999/graphql` and log batches to the collector on `http://localhost:7790/v1/logs`. Tampermonkey asks once; choose **Always allow**. If your Stash runs elsewhere, change `STASH` in the script and add a matching `@connect`.
 - `@grant GM_xmlhttpRequest` (Stash requests, so Reptyle's CSP/CORS and mixed-content rules do not apply) and `GM_addStyle`.
 
 ## Checks
@@ -32,4 +34,4 @@ Runs on `https://app.reptyle.com/*` (top frame only).
 npm run check      # lint (Tampermonkey 5.5.1 rule set) + unit tests
 ```
 
-`npm run lint` needs desktop Chrome with Tampermonkey 5.5.1 installed (set `TAMPERMONKEY_EXTENSION_DIR` to override); `npm run check:ci` uses the pinned stand-in after `npm ci --prefix tools/lint-ci`. Unit tests cover metadata/grant consistency, the helpers and `lookupVideo` against a stubbed `GM_xmlhttpRequest` (URL+title match, fuzzy fallback, unreachable Stash, HTTP errors).
+`npm run lint` needs desktop Chrome with Tampermonkey 5.5.1 installed (set `TAMPERMONKEY_EXTENSION_DIR` to override); `npm run check:ci` uses the pinned stand-in after `npm ci --prefix tools/lint-ci`. Unit tests cover metadata/grant consistency, the helpers and `lookupVideo` against a stubbed `GM_xmlhttpRequest` (URL+title match, fuzzy fallback, unreachable Stash, HTTP errors) and the shared log sink (entry shape, batching, retry while the collector is down, buffer cap).

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Stash Exists Checker - Reptyle
 // @namespace    local.stash-exists-checker
-// @version      4.0.0
-// @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, Adult Time, Brazzers; any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
+// @version      4.1.0
+// @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, Adult Time, the Aylo network (Brazzers, BangBros, Reality Kings, ...); any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
 // @match        *://*/*
 // @updateURL    https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
@@ -21,7 +21,7 @@
 
 (function () {
   'use strict';
-  const VERSION = '4.0.0';
+  const VERSION = '4.1.0';
   // One adapter per site or network: everything page-specific lives here, the core below is generic. Sites set up with the
   // picker are stored as JSON profiles and turned into the same adapter shape by profileSite (see "Site profiles" below).
   // hosts: page hosts the adapter runs on. detail/listing: model page paths.
@@ -34,7 +34,13 @@
   // performerUrlRe (optional): which saved performer URLs carry this site's model ids (modelKey is applied only to those).
   // sceneUrlParts: URL fragments that select this site's scenes in Stash; sceneKey/modelKey reduce a URL to the id both sides share.
   // scenePage/sceneTitleSel (optional): video page path and its title element; the page gets a badge from lookupVideo.
+  // sceneTitleFromUrl (optional): the title from the video page URL when no title element is known; the badge then floats.
   // cardTags (optional): every video card with a title gets a corner tag: IN STASH (by URL), IN STASH · TITLE, IN STASH · FILE or NOT IN STASH.
+  // sceneUrlParts entries are URL fragments (Stash url INCLUDES) or { name, regex } (url MATCHES_REGEX, one list for a network).
+  // Aylo brands from the installed AyloAPI community scrapers (stash/config, scrapers/community/*/ with AyloAPI); they share
+  // one scene id space.
+  var AYLO_DOMAINS = ['brazzers', 'brazzersnetwork', 'brazzersvr', 'bangbros', 'babes', 'digitalplayground', 'digitalplaygroundnetwork', 'fakehub', 'fakehostel', 'faketaxi', 'publicagent', 'letsdoeit', 'doegirls', 'propertysex', 'househumpers', 'squirted', 'sexselector', 'mypervyfamily', 'virtualporn', 'realitykings', 'realitykingsnetwork', 'rk', 'rkprime', '8thstreetlatinas', 'bignaturals', 'cumfiesta', 'daredorm', 'eurosexparties', 'gfleaks', 'happytugs', 'hdlove', 'hornybirds', 'hotgirlsgame', 'lilhumpers', 'lookathernow', 'mikeinbrazil', 'mikesapartment', 'milfhunter', 'momsbangteens', 'momslickteens', 'moneytalks', 'monstercurves', 'pure18', 'sneakysex', 'teenslovehugecocks', 'welivetogether', 'workmeharder'];
+  var AYLO_HOST_RE = new RegExp('(?:^|\\.)(?:' + AYLO_DOMAINS.join('|') + ')\\.com$');
   var SITES = [{
     id: 'reptyle',
     hosts: ['app.reptyle.com'],
@@ -88,13 +94,18 @@
     // Gamma actor ids differ between Gamma sites, so only Adult Time's own URLs count.
     performerUrlRe: /^https?:\/\/(?:[a-z0-9-]+\.)?adulttime\.com\//i,
     // Members cards rarely have a Stash URL (Stash holds the tour URLs of many Gamma sites): tags also match by title and file.
-    cardTags: true
+    cardTags: true,
+    // /en/video/<channel>/<Title-Slug>/<id>: id and title come from the URL; the badge floats until a title is picked.
+    scenePage: /^\/[a-z]{2}\/video\/(?:[^/]+\/)+\d+\/?$/i,
+    sceneTitleFromUrl: gammaTitleFromUrl
   }, {
-    // Aylo members area. Members links are /scene/<id>/<slug> and /model/<id>/<slug>; Stash mostly holds the tour URLs
-    // brazzers.com/video/<id>/<slug> and brazzers.com/pornstar/<id>/<slug>, with the same ids. Classes are build hashes,
-    // so cards are found by structure.
-    id: 'brazzers',
-    hosts: ['site-ma.brazzers.com'],
+    // Aylo members areas (site-ma.<brand>.com; Brazzers confirmed, the other brands run the same platform). Members links
+    // are /scene/<id>/<slug> and /model/<id>/<slug>. A scene keeps one release id across the whole network, and Stash
+    // holds the tour URL of whichever site its scraper used (a Brazzers scene under bangbros.com/video/<id>/ is common),
+    // so every Aylo domain counts: one regex list instead of a list per domain. Classes are build hashes, so cards are
+    // found by structure; the video page title comes from the URL and its badge floats.
+    id: 'aylo',
+    hosts: AYLO_DOMAINS.map(function (d) { return 'site-ma.' + d + '.com'; }),
     detail: /^\/model\/\d+/,
     listing: /^\/models\/?$/,
     modelParam: 'models',
@@ -108,11 +119,19 @@
     modelCardSel: '',
     modelEntrySel: '',
     modelNameSel: '',
-    sceneUrlParts: ['brazzers.com/video/', 'brazzers.com/scene/', 'brazzersnetwork.com/video/', 'brazzersvr.com/video/'],
-    sceneKey: ayloId(/(^|\.)brazzers(network|vr)?\.com$/, 'video|scene'),
-    modelKey: ayloId(/(^|\.)brazzers(network|vr)?\.com$/, 'model|pornstar'),
+    sceneUrlParts: [{ name: 'aylo', regex: '(?i)^https?://(?:[^/]+\\.)?(?:' + AYLO_DOMAINS.join('|') + ')\\.com/(?:video|scene|watch)/\\d+' }],
+    sceneKey: ayloId(AYLO_HOST_RE, 'video|scene|watch'),
+    modelKey: ayloId(AYLO_HOST_RE, 'model|pornstar|modelprofile'),
     modelUrl: function (origin, key, href) { var u = new URL(href, origin); return u.origin + u.pathname.replace(/\/+$/, ''); },
-    performerUrlParts: function (id) { return ['brazzers.com/model/' + id + '/', 'brazzers.com/pornstar/' + id + '/', 'brazzersnetwork.com/pornstar/' + id + '/']; },
+    performerUrlRe: new RegExp('^https?://(?:[a-z0-9-]+\\.)?(?:' + AYLO_DOMAINS.join('|') + ')\\.com/', 'i'),
+    // The members host's own brand first (site-ma.bangbros.com -> bangbros.com), then the Brazzers tour paths.
+    performerUrlParts: function (id, host) {
+      var own = host ? registrableDomain(host) : 'brazzers.com', parts = [own + '/model/' + id + '/', own + '/pornstar/' + id + '/', own + '/modelprofile/' + id + '/'];
+      ['brazzers.com/model/' + id + '/', 'brazzers.com/pornstar/' + id + '/', 'brazzersnetwork.com/pornstar/' + id + '/'].forEach(function (x) { if (parts.indexOf(x) < 0) parts.push(x); });
+      return parts;
+    },
+    scenePage: /^\/scene\/\d+/,
+    sceneTitleFromUrl: ayloTitleFromUrl,
     cardTags: true
   }];
   // Structured log sink shared by the local userscripts (docker-workspace/docs/userscripts.md): entries are batched to
@@ -285,7 +304,7 @@
   const canonUrl = (u) => (u || '').split('?')[0].split('#')[0].trim();
   // Node unit tests load the pure helpers only (function declarations are hoisted); nothing else touches the page.
   if (typeof module === 'object' && module.exports) {
-    module.exports = { logPage: logPage, createLogSink: createLogSink, VERSION: VERSION, SITES: SITES, siteFor: siteFor, cachedList: cachedList, normUrl: normUrl, normTitle: normTitle, normName: normName, extractMovieId: extractMovieId, extractModelId: extractModelId, extractGammaSceneId: extractGammaSceneId, extractGammaActorId: extractGammaActorId, gammaNameFromUrl: gammaNameFromUrl, ayloId: ayloId, ayloNameFromUrl: ayloNameFromUrl, modelIdFromParam: modelIdFromParam, modelNameFromParam: modelNameFromParam, norm: norm, canonUrl: canonUrl, lookupVideo: lookupVideo, linkPrefixOf: linkPrefixOf, pathPatternOf: pathPatternOf, keyModeOf: keyModeOf, profileKey: profileKey, registrableDomain: registrableDomain, validProfile: validProfile, profileSite: profileSite };
+    module.exports = { logPage: logPage, createLogSink: createLogSink, VERSION: VERSION, SITES: SITES, siteFor: siteFor, cachedList: cachedList, normUrl: normUrl, normTitle: normTitle, normName: normName, extractMovieId: extractMovieId, extractModelId: extractModelId, extractGammaSceneId: extractGammaSceneId, extractGammaActorId: extractGammaActorId, gammaNameFromUrl: gammaNameFromUrl, ayloId: ayloId, ayloNameFromUrl: ayloNameFromUrl, modelIdFromParam: modelIdFromParam, modelNameFromParam: modelNameFromParam, norm: norm, canonUrl: canonUrl, lookupVideo: lookupVideo, linkPrefixOf: linkPrefixOf, pathPatternOf: pathPatternOf, keyModeOf: keyModeOf, profileKey: profileKey, registrableDomain: registrableDomain, validProfile: validProfile, profileSite: profileSite, ayloTitleFromUrl: ayloTitleFromUrl, gammaTitleFromUrl: gammaTitleFromUrl };
     return;
   }
   // Runs on every page. Other sites only get the setup guide in the Tampermonkey menu: no requests, no logs, no observer
@@ -359,6 +378,11 @@
   function gammaNameFromUrl(href) { var m = String(href || '').match(/\/pornstar\/(?:view\/)?([^/?#]+)\/\d+/i); if (!m) return ''; var slug; try { slug = decodeURIComponent(m[1]); } catch (e) { slug = m[1]; } if (/^(?:name|view|-+)$/i.test(slug)) return ''; return slug.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim(); }
   // Aylo ids: /<kind>/<id>/<slug> on a host matching hostRe; relative links (the current site) always qualify.
   function ayloId(hostRe, kinds) { var pathRe = new RegExp('^/(?:' + kinds + ')/(\\d+)(?:[/?#]|$)', 'i'); return function (href) { var s = String(href || ''); var m = s.match(/^(?:https?:)?\/\/([^/?#]+)(.*)$/i); if (m && !hostRe.test(m[1].toLowerCase())) return null; var p = (m ? m[2] : s).match(pathRe); return p ? p[1] : null; }; }
+  // Video titles from URL slugs, for video pages whose title element is not known: words only, which is what the exact
+  // title (case-insensitive) and file-name lookups need. Aylo: /scene/<id>/<slug>; Gamma: /en/video/<channel>/<Title>/<id>.
+  function slugWords(slug) { try { slug = decodeURIComponent(slug); } catch (e) { /* keep it as it is */ } return slug.replace(/[-_+]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function ayloTitleFromUrl(href) { var m = String(href || '').match(/\/(?:scene|video|watch)\/\d+\/([^/?#]+)/i); return m ? slugWords(m[1]) : ''; }
+  function gammaTitleFromUrl(href) { var m = String(href || '').match(/\/[a-z]{2}\/video\/(?:[^/?#]+\/)*?([^/?#]+)\/\d+\/?(?:[?#]|$)/i); return m && !/^\d+$/.test(m[1]) ? slugWords(m[1]) : ''; }
   function ayloNameFromUrl(href) { var m = String(href || '').match(/\/(?:model|pornstar)\/\d+\/([^/?#]+)/i); if (!m) return ''; var slug; try { slug = decodeURIComponent(m[1]); } catch (e) { slug = m[1]; } return slug.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim(); }
   // The one model a page is filtered to (?models=65308); several ids or none mean no model page.
   function modelIdFromParam(search, param) { if (!param) return null; var v; try { v = new URLSearchParams(search).get(param); } catch (e) { return null; } return v && /^\d+$/.test(v.trim()) ? v.trim() : null; }
@@ -437,10 +461,12 @@
   function cardFor(a) { var best = null; if (site.videoCardSel) { for (var el = a; el && el !== document.body; el = el.parentElement) { if (!el.matches(site.videoCardSel)) continue; if (keyCount(el, site.videoLinkSel, site.sceneKey) > 1) break; best = el; } } return best || structuralCard(a, site.videoLinkSel, site.sceneKey); }
   function cardTitleForCard(card) { if (site.videoTitleSel) { var te = card.querySelector(site.videoTitleSel); return te ? (te.innerText || te.textContent || '').trim() : ''; } var links = card.querySelectorAll(site.videoLinkSel); for (var ti = 0; ti < links.length; ti++) { var t = (links[ti].innerText || '').trim(); if (t) return t; } return ''; }
   function matchSceneForCard(card, urlMap, titleMap) { var as = card.querySelectorAll(site.videoLinkSel), id = null; for (var ai = 0; ai < as.length && !id; ai++) id = site.sceneKey(as[ai].getAttribute('href') || as[ai].href); if (!as.length) return null; if (id && urlMap && urlMap[id]) return urlMap[id]; if (titleMap) { var nt = normTitle(cardTitleForCard(card)); if (nt && titleMap[nt]) return titleMap[nt]; } return null; }
-  function fetchScenesForUrlPart(part) { return (function next(page, acc) { return gql('query($h:String!,$p:Int!){ findScenes(scene_filter:{url:{value:$h, modifier:INCLUDES}}, filter:{per_page:500, page:$p}){ scenes{ id title urls } } }', { h: part, p: page }).then(function (data) { var ss = (data && data.findScenes && data.findScenes.scenes) || []; var all = acc.concat(ss); return (ss.length < 500 || page >= 20) ? all : next(page + 1, all); }); })(1, []); }
-  function buildSceneMap() { var map = {}; for (var l = 0; l < site.sceneUrlParts.length; l++) { var scenes = sceneRows[site.sceneUrlParts[l]] || []; for (var i = 0; i < scenes.length; i++) { var s = scenes[i]; for (var j = 0; j < ((s.urls) || []).length; j++) { var id = site.sceneKey(s.urls[j]); if (id && !map[id]) map[id] = s; } } } sceneMapCache = map; markDirty(); }
+  // A URL part is a fragment (url INCLUDES) or { name, regex } (url MATCHES_REGEX, e.g. a whole network in one list).
+  function partName(part) { return typeof part === 'string' ? part : part.name; }
+  function fetchScenesForUrlPart(part) { var regex = typeof part !== 'string'; return (function next(page, acc) { return gql('query($h:String!,$m:CriterionModifier!,$p:Int!){ findScenes(scene_filter:{url:{value:$h, modifier:$m}}, filter:{per_page:500, page:$p}){ scenes{ id title urls } } }', { h: regex ? part.regex : part, m: regex ? 'MATCHES_REGEX' : 'INCLUDES', p: page }).then(function (data) { var ss = (data && data.findScenes && data.findScenes.scenes) || []; var all = acc.concat(ss); return (ss.length < 500 || page >= 20) ? all : next(page + 1, all); }); })(1, []); }
+  function buildSceneMap() { var map = {}; for (var l = 0; l < site.sceneUrlParts.length; l++) { var scenes = sceneRows[partName(site.sceneUrlParts[l])] || []; for (var i = 0; i < scenes.length; i++) { var s = scenes[i]; for (var j = 0; j < ((s.urls) || []).length; j++) { var id = site.sceneKey(s.urls[j]); if (id && !map[id]) map[id] = s; } } } sceneMapCache = map; markDirty(); }
   // One stored list per URL part, so adapters that share a part (Gamma's /en/video/) share its scenes.
-  var sceneLists = site.sceneUrlParts.map(function (part) { return cachedList(stashStore, 'scenes:' + part, function () { return fetchScenesForUrlPart(part); }, function (items) { sceneRows[part] = items; buildSceneMap(); }); });
+  var sceneLists = site.sceneUrlParts.map(function (part) { return cachedList(stashStore, 'scenes:' + partName(part), function () { return fetchScenesForUrlPart(part); }, function (items) { sceneRows[partName(part)] = items; buildSceneMap(); }); });
   function ensureSceneMap() { return Promise.all(sceneLists.map(function (get) { return get(); })).then(function () { return sceneMapCache; }); }
   function fetchPerformerTitleMap(pid) { if (performerTitleMapCache && performerTitleMapFor === String(pid)) return Promise.resolve(performerTitleMapCache); var num = parseInt(pid, 10); return gql('query{ findScenes(scene_filter:{performers:{value:[' + num + '], modifier:INCLUDES}}, filter:{per_page:200}){ count scenes{ id title urls } } }').then(function (data) { var map = {}; var scenes = ((data && data.findScenes && data.findScenes.scenes) || []); for (var i = 0; i < scenes.length; i++) { var k = normTitle(scenes[i].title); if (k && !map[k]) map[k] = scenes[i]; } performerTitleMapCache = map; performerTitleMapFor = String(pid); return map; }); }
   function titleLinkForCard(card) { if (site.videoTitleSel) return card.querySelector(site.videoTitleSel); var links = card.querySelectorAll(site.videoLinkSel); for (var li = 0; li < links.length; li++) { if ((links[li].innerText || '').trim()) return links[li]; } return null; }
@@ -607,7 +633,7 @@
   // Performer by the site's model id in a saved URL; resolves to null when the adapter has no URL rule or nothing matches.
   function findPerformerById(id) {
     if (!id || !site.performerUrlParts) return Promise.resolve(null);
-    var parts = site.performerUrlParts(id);
+    var parts = site.performerUrlParts(id, location.hostname);
     return Promise.all(parts.map(function (part) { return gql('query($u:String!){ findPerformers(performer_filter:{url:{value:$u, modifier:INCLUDES}}, filter:{per_page:5}){ performers{ id name alias_list urls } } }', { u: part }); })).then(function (results) {
       for (var i = 0; i < results.length; i++) { var ps = (results[i] && results[i].findPerformers && results[i].findPerformers.performers) || []; if (ps.length) return ps[0]; }
       return null;
@@ -726,9 +752,12 @@
   async function checkDetail() {
     if (!site.scenePage) return;
     if (!site.scenePage.test(location.pathname)) { document.getElementById('stash-exists-badge')?.remove(); return; }
-    const h1 = q(site.sceneTitleSel);
-    if (!h1) return;
-    const title = h1.innerText.trim();
+    // With a title element the badge goes after it; without one (sceneTitleFromUrl) the title comes from the URL and the
+    // badge floats in the shared dock.
+    const h1 = site.sceneTitleSel ? q(site.sceneTitleSel) : null;
+    if (site.sceneTitleSel && !h1) return;
+    const currentTitle = () => (h1 ? (q(site.sceneTitleSel)?.innerText || '').trim() : site.sceneTitleFromUrl ? site.sceneTitleFromUrl(location.pathname) : '');
+    const title = currentTitle();
     const cleanUrl = canonUrl(location.href);
     if (!title) return;
     let badge = document.getElementById('stash-exists-badge');
@@ -742,12 +771,13 @@
     badge.className = 'stash-no';
     badge.target = '_blank';
     badge.href = STASH_ORIGIN + '/search?q=' + encodeURIComponent(title);
-    h1.after(badge);
+    if (h1) h1.after(badge);
+    else dockPanel(badge, 34);
     // A scene id in the stored scene list answers without a request; otherwise exact title and canonical URL are asked.
     const pageKey = site.sceneKey(location.pathname);
     const listed = sceneMapCache && pageKey ? sceneMapCache[pageKey] : null;
     const res = listed ? { best: listed, via: 'url' } : await lookupVideo({ title, url: cleanUrl });
-    if (!badge.isConnected || q(site.sceneTitleSel)?.innerText.trim() !== title) return;
+    if (!badge.isConnected || currentTitle() !== title) return;
     if (!res || res.error) log('warn', 'stash unreachable', res?.error || 'no result', { view: 'detail' });
     else log('info', 'detail checked', '', { inStash: !!res.best, sceneId: res.best?.id, via: res.via || undefined, byTitle: res.byTitle?.count || 0, byUrl: res.byUrl?.count || 0, similar: res.similar || 0 });
     if (!res || res.error) { badge.textContent = 'Stash unreachable'; badge.className = 'stash-err'; badge.title = (res?.error || 'fetch failed') + ' - is Stash running on ' + STASH_ORIGIN.replace(/^https?:\/\//, '') + '?'; return; }

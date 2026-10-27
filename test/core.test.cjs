@@ -68,7 +68,7 @@ test('reptyle adapter keys pages, scenes and models', () => {
     assert.equal(r.modelKey('/models/11304/'), '11304');
     assert.equal(r.modelUrl('https://app.reptyle.com', '11304'), 'https://app.reptyle.com/models/11304');
 });
-const { linkPrefixOf, pathPatternOf, keyModeOf, profileKey, registrableDomain, validProfile, profileSite } = require('../stash-exists-checker.user.js');
+const { linkPrefixOf, pathPatternOf, keyModeOf, profileKey, registrableDomain, validProfile, profileSite, ayloTitleFromUrl, gammaTitleFromUrl } = require('../stash-exists-checker.user.js');
 
 // The setup guide derives a site's rules from the pages the user picks on. Acceptance: from sample URLs of the three
 // built-in sites it must reproduce what their adapters were written with by hand.
@@ -162,9 +162,17 @@ test('the video badge needs a known video page; card tags run on every built-in 
     assert.ok(!r.scenePage.test('/models/11304'));
     assert.equal(r.sceneTitleSel, 'h1');
     assert.equal(r.cardTags, true);
-    for (const s of SITES) if (s.scenePage) assert.equal(typeof s.sceneTitleSel, 'string', s.id + ' needs sceneTitleSel');
-    assert.deepEqual(SITES.filter(s => s.scenePage).map(s => s.id), ['reptyle'], 'video page DOM known on Reptyle only; the setup guide adds it elsewhere');
-    assert.deepEqual(SITES.filter(s => s.cardTags).map(s => s.id), ['reptyle', 'adulttime', 'brazzers'], 'card titles are known on every built-in site');
+    // (every video page needs a title element or a title from the URL; checked below)
+    assert.deepEqual(SITES.filter(s => s.scenePage).map(s => s.id), ['reptyle', 'adulttime', 'aylo']);
+    assert.deepEqual(SITES.filter(s => s.sceneTitleSel).map(s => s.id), ['reptyle'], 'title element known on Reptyle only; elsewhere the title comes from the URL until one is picked');
+    for (const s of SITES) if (s.scenePage && !s.sceneTitleSel) assert.equal(typeof s.sceneTitleFromUrl, 'function', s.id + ' needs a title source');
+    const at = siteFor('members.adulttime.com');
+    assert.ok(at.scenePage.test('/en/video/mommysboy/Be-Polite-To-Our-Guest-Young-Man/209586'));
+    assert.ok(!at.scenePage.test('/en/videos/'));
+    assert.equal(gammaTitleFromUrl('/en/video/mommysboy/Be-Polite-To-Our-Guest-Young-Man/209586'), 'Be Polite To Our Guest Young Man');
+    assert.equal(gammaTitleFromUrl('https://www.evilangel.com/en/video/Anally-Talented-03/67506'), 'Anally Talented 03');
+    assert.equal(gammaTitleFromUrl('/en/video/Room-101-Part-2'), '');
+    assert.deepEqual(SITES.filter(s => s.cardTags).map(s => s.id), ['reptyle', 'adulttime', 'aylo'], 'card titles are known on every built-in site');
 });
 test('ids come from movie and model links only', () => {
     assert.equal(extractMovieId('https://app.reptyle.com/movies/32219?r=x'), '32219');
@@ -199,22 +207,44 @@ test('gamma helpers read names and ids from URLs', () => {
     assert.equal(normTitle('Sofía in Café Olé'), 'sofia in cafe ole');
     assert.equal(extractGammaSceneId(null), null);
 });
-test('brazzers adapter: members ids match tour URLs in Stash, other networks do not', () => {
+test('aylo adapter: one scene id across the whole network, members links match tour URLs of every brand', () => {
     const b = siteFor('site-ma.brazzers.com');
-    assert.equal(b.id, 'brazzers');
+    assert.equal(b.id, 'aylo');
+    assert.equal(siteFor('site-ma.bangbros.com').id, 'aylo');
+    assert.equal(siteFor('site-ma.realitykings.com').id, 'aylo');
     assert.ok(b.detail.test('/model/2717/kenzie-reeves'));
     assert.ok(!b.detail.test('/models'));
     assert.ok(b.listing.test('/models'));
     assert.equal(b.sceneKey('/scene/10045231/some-title'), '10045231');
     assert.equal(b.sceneKey('https://www.brazzers.com/video/10045231/some-title'), '10045231');
     assert.equal(b.sceneKey('https://brazzersnetwork.com/video/7/x'), '7');
-    assert.equal(b.sceneKey('https://www.bangbros.com/video/10045231/x'), null);
+    // A Brazzers members scene that Stash holds under its BangBros tour URL (same release id) is the same scene.
+    assert.equal(b.sceneKey('https://bangbros.com/video/11356971/stepdaughter-anal-fantasy'), '11356971');
+    assert.equal(b.sceneKey('https://www.realitykings.com/scene/5112233/x'), '5112233');
+    assert.equal(b.sceneKey('https://www.letsdoeit.com/watch/123/x'), '123');
+    assert.equal(b.sceneKey('https://www.bangbrothers.example/video/10045231/x'), null, 'look-alike hosts are not Aylo');
     assert.equal(b.sceneKey('https://evilbrazzers.com.example/video/1/x'), null);
+    // The one Stash list for the network: a Go regex (case-insensitive flag) over every Aylo domain.
+    const part = b.sceneUrlParts[0], re = new RegExp(part.regex.replace('(?i)', ''), 'i');
+    assert.equal(part.name, 'aylo');
+    assert.ok(part.regex.startsWith('(?i)^https?://'));
+    assert.ok(re.test('https://bangbros.com/video/11356971/stepdaughter-anal-fantasy'));
+    assert.ok(re.test('https://www.Brazzers.com/video/1/x'));
+    assert.ok(!re.test('https://www.evilangel.com/en/video/x/1'));
+    assert.ok(!re.test('https://notbrazzers.com/video/1/x'), 'domain names are whole');
     assert.equal(b.sceneKey('/model/2717/kenzie-reeves'), null);
     assert.equal(b.modelKey('/model/2717/kenzie-reeves'), '2717');
     assert.equal(b.modelKey('https://www.brazzers.com/pornstar/2717/kenzie-reeves'), '2717');
     assert.equal(b.modelUrl('https://site-ma.brazzers.com', '2717', '/model/2717/kenzie-reeves?x=1'), 'https://site-ma.brazzers.com/model/2717/kenzie-reeves');
-    assert.deepEqual(b.performerUrlParts('65308'), ['brazzers.com/model/65308/', 'brazzers.com/pornstar/65308/', 'brazzersnetwork.com/pornstar/65308/']);
+    assert.deepEqual(b.performerUrlParts('65308'), ['brazzers.com/model/65308/', 'brazzers.com/pornstar/65308/', 'brazzers.com/modelprofile/65308/', 'brazzersnetwork.com/pornstar/65308/']);
+    assert.deepEqual(b.performerUrlParts('9', 'site-ma.bangbros.com').slice(0, 3), ['bangbros.com/model/9/', 'bangbros.com/pornstar/9/', 'bangbros.com/modelprofile/9/'], 'the members brand first');
+    assert.ok(b.performerUrlRe.test('https://www.bangbros.com/model/9/x'));
+    assert.equal(b.modelKey('https://www.realitykings.com/model/77/x'), '77');
+    // The video page: id and title from the URL (no title element is known), badge floating.
+    assert.ok(b.scenePage.test('/scene/11356971/stepdaughter-anal-fantasy'));
+    assert.equal(b.sceneTitleSel, undefined);
+    assert.equal(ayloTitleFromUrl('/scene/11356971/stepdaughter-anal-fantasy'), 'stepdaughter anal fantasy');
+    assert.equal(ayloTitleFromUrl('/scene/11356971'), '');
     assert.equal(ayloNameFromUrl('/model/2717/kenzie-reeves'), 'kenzie reeves');
     assert.equal(normName(ayloNameFromUrl('/model/2717/kenzie-reeves')), normName('Kenzie Reeves'));
 });

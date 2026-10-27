@@ -58,7 +58,7 @@ window.GM_xmlhttpRequest = function (o) {
   else if (/performer_filter:\\{url/.test(q)) { __log.push('byurl:' + v.u); const ps = PERFS.filter(p => p.urls.some(u => u.includes(v.u))); data = { findPerformers: { performers: JSON.parse(JSON.stringify(ps)) } }; }
   else if (/findPerformers\\(filter:\\{q:/.test(q)) { const n = v.q.toLowerCase(); const ps = PERFS.filter(p => [p.name].concat(p.alias_list).some(x => x.toLowerCase().includes(n))); data = { findPerformers: { count: ps.length, performers: JSON.parse(JSON.stringify(ps)) } }; }
   else if (/findPerformers/.test(q)) { __log.push('perfs:' + v.p); data = { findPerformers: { count: PERFS.length, performers: JSON.parse(JSON.stringify(PERFS)) } }; }
-  else if (/url:\\{value:\\$h/.test(q)) { __log.push('scenes:' + v.h + ':' + v.p); data = { findScenes: { scenes: v.h === 'newsite.example' ? SCENES.filter(s => s.urls.some(u => u.includes(v.h))) : v.h === 'brazzers.com/video/' ? [{ id: '70', title: 'BZ Cross', urls: ['https://www.brazzers.com/video/9001/bz-cross'] }] : /brazzers/.test(v.h) ? [] : v.h === '/en/video/' ? [{ id: '60', title: 'Cross Site', urls: ['https://www.evilangel.com/en/video/evilangel/Cross-Site/209586'] }] : [{ id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }] } }; }
+  else if (/url:\\{value:\\$h/.test(q)) { __log.push('scenes:' + v.h + ':' + v.p); data = { findScenes: { scenes: v.h === 'newsite.example' ? SCENES.filter(s => s.urls.some(u => u.includes(v.h))) : v.m === 'MATCHES_REGEX' && /bangbros/.test(v.h) ? [{ id: '70', title: 'BZ Cross', urls: ['https://bangbros.com/video/9001/bz-cross'] }] : v.h === '/en/video/' ? [{ id: '60', title: 'Cross Site', urls: ['https://www.evilangel.com/en/video/evilangel/Cross-Site/209586'] }] : [{ id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }] } }; }
   else if (/performers:\\{value:\\[217\\]/.test(q)) data = { findScenes: { count: 1, scenes: [{ id: '61', title: 'Title Match AT', urls: [] }] } };
   else if (/performers:\\{value/.test(q)) data = { findScenes: { count: 1, scenes: [{ id: '51', title: 'Hit By Title', urls: [] }] } };
   else if (/scene_filter:\\$sf/.test(q) && v.sf.title) { __log.push('lookup:t:' + v.sf.title.value); const ss = SCENES.filter(s => s.title.toLowerCase() === v.sf.title.value.toLowerCase()); data = { findScenes: { count: ss.length, scenes: ss } }; }
@@ -299,6 +299,11 @@ async function connect(url) {
     await wait('__log.some(x=>x.startsWith("update:"))');
     assert.ok(await ev('__log.some(x=>x.startsWith("update:") && x.endsWith(",\\"https://members.adulttime.com/en/pornstar/view/Kenzie-Reeves/49648\\"]}"))'));
     await stored('cache:v1:performers', v => v === null);
+    // Video page: id and title from the URL (no title element known), the badge floats in the shared dock.
+    const badgeText = '(document.getElementById("stash-exists-badge")?.textContent || "")';
+    await go('/en/video/evilangel/Cross-Site/209586', 'members.adulttime.com');
+    await wait(badgeText + '==="In Stash #60 (url)"');
+    assert.equal(await ev('document.getElementById("stash-exists-badge").parentElement.id'), 'userscript-dock');
     // Unfiltered video listing: no model page, but scenes Stash holds are marked by id.
     await go('/en/videos/', 'members.adulttime.com');
     await wait('document.querySelectorAll(".stash-model-link-video-badge").length===1');
@@ -317,12 +322,14 @@ async function connect(url) {
     assert.ok(await ev('__log.includes("byurl:brazzers.com/model/2717/")'));
     // The performer list stored on Adult Time serves Brazzers too; Brazzers scenes are its own lists.
     assert.equal(await ev('__log.some(x=>x.startsWith("perfs:"))'), false);
-    assert.ok(await ev('__log.includes("scenes:brazzers.com/video/:1")'));
+    // One regex list for the whole Aylo network; the Brazzers scene is found under its BangBros URL (same release id).
+    assert.ok(await ev('__log.some(x => x.startsWith("scenes:(?i)^https?://") && x.includes("bangbros") && x.endsWith(":1"))'));
+    assert.equal(await ev('__log.filter(x => x.startsWith("scenes:")).length'), 1);
     assert.equal(await ev('!!document.getElementById("stash-model-link-heading-badge")'), true);
     assert.equal(await ev(badges + '.length'), 2);
     assert.equal(await ev('[...' + badges + '].every(b=>b.parentElement.classList.contains("e1vusg2z1"))'), true);
     assert.deepEqual(await ev('[...' + badges + '].map(b=>b.href.split("/").pop()).sort()'), ['61', '70']);
-    assert.deepEqual(await ev('GM_getValue("model:brazzers:2717", null)'), { name: 'kenzie reeves', url: 'https://site-ma.brazzers.com/model/2717/kenzie-reeves' });
+    assert.deepEqual(await ev('GM_getValue("model:aylo:2717", null)'), { name: 'kenzie reeves', url: 'https://site-ma.brazzers.com/model/2717/kenzie-reeves' });
 
     // Scenes filtered to that model (?models=2717) count as the model page.
     await go('/scenes?addon=162%2C5971%2C5951&models=2717', 'site-ma.brazzers.com');
@@ -357,6 +364,14 @@ async function connect(url) {
     assert.equal(await ev('document.querySelectorAll("[data-sml-video-green]").length'), 0);
     await wait(bzCards + '.join("|")==="none|none|none"');
     assert.equal(await ev('document.querySelector(".e1vusg2z1").dataset.stashQueued'), '9999');
+    // Video pages: the scene Stash holds under its BangBros URL answers from the list; one it lacks is asked by the title
+    // from the URL (exact title, file name, similar count) and reads "Not in Stash", never "Stash unreachable".
+    await go('/scene/9001/bz-cross', 'site-ma.brazzers.com');
+    await wait(badgeText + '==="In Stash #70 (url)"');
+    assert.equal(await ev('document.getElementById("stash-exists-badge").parentElement.id'), 'userscript-dock');
+    await go('/scene/9003/not-in-stash-bz', 'site-ma.brazzers.com');
+    await wait(badgeText + '.startsWith("Not in Stash")');
+    assert.ok(await ev('__log.includes("lookup:t:not in stash bz") && __log.includes("lookup:p:\\"not%in%stash%bz\\"")'));
 
     // Model listing: names from the URL, structural cards, + URL only where the URL is missing.
     await stored('cache:v1:performers', v => !!v); // stored again by the plain listing after the last write

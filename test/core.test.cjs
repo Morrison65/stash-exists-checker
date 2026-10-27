@@ -33,10 +33,10 @@ test('updates come from the raw file on master', () => {
     assert.deepEqual(meta.updateURL, [raw]);
     assert.deepEqual(meta.downloadURL, [raw]);
 });
-test('every adapter host has a whole-site @match and Stash is the only connect', () => {
-    const hosts = SITES.flatMap(s => s.hosts);
-    assert.deepEqual([...meta.match].sort(), hosts.map(h => 'https://' + h + '/*').sort());
+test('runs on every site (setup guide everywhere) and Stash is the only connect', () => {
+    assert.deepEqual(meta.match, ['*://*/*']);
     assert.deepEqual(meta.connect, ['localhost']);
+    assert.ok(meta.grant.includes('GM_registerMenuCommand'));
 });
 test('adapters are complete and ids are unique', () => {
     const fields = ['id', 'hosts', 'detail', 'listing', 'videoLinkSel', 'modelLinkSel', 'sceneUrlParts', 'sceneKey', 'modelKey', 'modelUrl'];
@@ -68,14 +68,103 @@ test('reptyle adapter keys pages, scenes and models', () => {
     assert.equal(r.modelKey('/models/11304/'), '11304');
     assert.equal(r.modelUrl('https://app.reptyle.com', '11304'), 'https://app.reptyle.com/models/11304');
 });
-test('only adapters with a known video page DOM get the video badge and card dots', () => {
+const { linkPrefixOf, pathPatternOf, keyModeOf, profileKey, registrableDomain, validProfile, profileSite } = require('../stash-exists-checker.user.js');
+
+// The setup guide derives a site's rules from the pages the user picks on. Acceptance: from sample URLs of the three
+// built-in sites it must reproduce what their adapters were written with by hand.
+test('picked pages give the link prefixes the built-in adapters use', () => {
+    assert.equal(linkPrefixOf('/models/11304'), '/models/');
+    assert.equal(linkPrefixOf('/movies/32219'), '/movies/');
+    assert.equal(linkPrefixOf('/model/2717/kenzie-reeves', 'Kenzie Reeves'), '/model/');
+    assert.equal(linkPrefixOf('/scene/10045231/some-title'), '/scene/');
+    assert.equal(linkPrefixOf('/en/pornstar/view/Kenzie-Reeves/49648', 'Kenzie Reeves'), '/en/pornstar/view/');
+    assert.equal(linkPrefixOf('/en/video/mommysboy/Be-Polite-To-Our-Guest-Young-Man/209586'), '/en/video/');
+    assert.equal(linkPrefixOf('/model/jane', 'Jane'), '/model/', 'a one-word name slug is not part of the prefix');
+    assert.equal(linkPrefixOf('/12345/x'), '');
+});
+test('picked pages give path patterns that keep model and video pages apart', () => {
+    const re = (p, n) => new RegExp(pathPatternOf(p, n));
+    assert.equal(pathPatternOf('/models/11304'), '^/models/\\d+(?:/|$)');
+    assert.equal(pathPatternOf('/model/2717/kenzie-reeves', 'Kenzie Reeves'), '^/model/\\d+/[^/]+(?:/|$)');
+    const gammaModel = re('/en/pornstar/view/Kenzie-Reeves/49648', 'Kenzie Reeves');
+    assert.ok(gammaModel.test('/en/pornstar/view/Demi-Hawks/53303'));
+    assert.ok(!gammaModel.test('/en/video/mommysboy/Some-Title/209586'), 'a model pattern must not match video pages');
+    assert.ok(re('/movies/32219').test('/movies/1'));
+    assert.ok(!re('/movies/32219').test('/models/1'));
+    assert.equal(keyModeOf('/model/2717/kenzie-reeves', '/model/'), 'id');
+    assert.equal(keyModeOf('/videos/some-title-slug', '/videos/'), 'slug');
+});
+test('profile keys read the site links and the tour URLs Stash holds alike', () => {
+    const scene = profileKey('site-ma.brazzers.com', '/scene/', 'id');
+    assert.equal(scene('/scene/10045231/some-title?x=1'), '10045231');
+    assert.equal(scene('https://www.brazzers.com/video/10045231/some-title'), '10045231', 'other hosts are keyed by path alone');
+    assert.equal(scene('/model/2717/kenzie-reeves'), null, 'own links outside the prefix are not scenes');
+    const slug = profileKey('www.example.com', '/videos/', 'slug');
+    assert.equal(slug('/videos/Some-Title.html'), 'some-title');
+    assert.equal(slug('https://tour.example.com/video/some-title/'), 'some-title');
+    assert.equal(scene('not a url at all', 'x'), null);
+    assert.equal(registrableDomain('members.example.com'), 'example.com');
+    assert.equal(registrableDomain('a.b.example.co.uk'), 'example.co.uk');
+});
+const sampleProfile = () => ({
+    v: 1, host: 'members.newsite.example',
+    model: { path: '^/performer/\\d+/[^/]+(?:/|$)', nameSel: 'h1.ProfileName', linkPrefix: '/performer/', key: 'id' },
+    card: { linkPrefix: '/watch/', titleSel: 'h3.tile-title', key: 'id' },
+    video: { path: '^/watch/\\d+/[^/]+(?:/|$)', titleSel: 'h1.vid-title', linkPrefix: '/watch/', key: 'id' },
+    tags: true
+});
+test('a saved profile makes an unknown host a supported site with every check', () => {
+    const profiles = { 'members.newsite.example': sampleProfile() };
+    assert.equal(siteFor('members.newsite.example'), null);
+    const s = siteFor('members.newsite.example', profiles);
+    assert.equal(s.id, 'profile:members.newsite.example');
+    assert.ok(s.detail.test('/performer/555/anna-x'));
+    assert.ok(!s.listing.test('/performer/555/anna-x'), 'no model list picked: never a listing');
+    assert.equal(s.videoLinkSel, 'a[href*="/watch/"]');
+    assert.equal(s.sceneKey('https://tour.newsite.example/video/80001/x'), '80001');
+    assert.deepEqual(s.sceneUrlParts, ['newsite.example']);
+    assert.ok(s.performerUrlRe.test('https://www.newsite.example/performer/555/anna-x'));
+    assert.ok(!s.performerUrlRe.test('https://www.othersite.example/performer/555'));
+    assert.ok(s.scenePage.test('/watch/80001/some-title'));
+    assert.equal(s.cardTags, true);
+    assert.equal(s.strictName, true, 'never falls back to the page title as a performer name');
+    // Partial profiles work: a card-only profile marks videos, a model-only one has no scene list to fetch.
+    const cardOnly = profileSite({ host: 'x.example', card: { linkPrefix: '/v/', key: 'id' } }, null);
+    assert.equal(cardOnly.detail.test('/v/1'), false);
+    assert.deepEqual(cardOnly.sceneUrlParts, ['x.example']);
+    const modelOnly = profileSite({ host: 'x.example', model: { path: '^/m/\\d+', nameSel: 'h1', linkPrefix: '/m/', key: 'id' } }, null);
+    assert.deepEqual(modelOnly.sceneUrlParts, []);
+    assert.equal(modelOnly.videoLinkSel, 'a[data-stash-exists-none]');
+});
+test('on a built-in host a profile changes selectors only, never the keys', () => {
+    const at = siteFor('members.adulttime.com');
+    const s = siteFor('members.adulttime.com', { 'members.adulttime.com': { v: 1, host: 'members.adulttime.com', video: { path: '^/en/video/[^/]+/[^/]+/\\d+(?:/|$)', titleSel: 'h1.ScenePlayerHeader-SceneTitle' }, card: { linkPrefix: '/x/', titleSel: 'h2.Other' }, tags: false } });
+    assert.equal(s.id, 'adulttime');
+    assert.equal(s.sceneKey, at.sceneKey);
+    assert.equal(s.videoLinkSel, at.videoLinkSel);
+    assert.equal(s.videoTitleSel, 'h2.Other');
+    assert.ok(s.scenePage.test('/en/video/mommysboy/Title/209586'));
+    assert.equal(s.cardTags, false, 'a profile can switch the card tags off');
+    assert.equal(at.cardTags, true, 'the built-in adapter itself is not changed');
+});
+test('broken profiles are rejected and ignored', () => {
+    assert.equal(validProfile(sampleProfile()), '');
+    assert.match(validProfile({}), /host/);
+    assert.match(validProfile({ host: 'a.example', model: { path: '(' } }), /regex/);
+    assert.match(validProfile({ host: 'a.example', card: { linkPrefix: 'watch' } }), /linkPrefix/);
+    assert.match(validProfile({ host: 'a.example', card: { key: 'guid' } }), /key/);
+    assert.match(validProfile({ host: 'a.example', stash: { sceneParts: [1] } }), /sceneParts/);
+    assert.equal(siteFor('a.example', { 'a.example': { host: 'a.example', model: { path: '(' } } }), null);
+});
+test('the video badge needs a known video page; card tags run on every built-in site', () => {
     const r = siteFor('app.reptyle.com');
     assert.ok(r.scenePage.test('/movies/29638'));
     assert.ok(!r.scenePage.test('/models/11304'));
     assert.equal(r.sceneTitleSel, 'h1');
-    assert.equal(r.cardDots, true);
+    assert.equal(r.cardTags, true);
     for (const s of SITES) if (s.scenePage) assert.equal(typeof s.sceneTitleSel, 'string', s.id + ' needs sceneTitleSel');
-    assert.deepEqual(SITES.filter(s => s.scenePage || s.cardDots).map(s => s.id), ['reptyle']);
+    assert.deepEqual(SITES.filter(s => s.scenePage).map(s => s.id), ['reptyle'], 'video page DOM known on Reptyle only; the setup guide adds it elsewhere');
+    assert.deepEqual(SITES.filter(s => s.cardTags).map(s => s.id), ['reptyle', 'adulttime', 'brazzers'], 'card titles are known on every built-in site');
 });
 test('ids come from movie and model links only', () => {
     assert.equal(extractMovieId('https://app.reptyle.com/movies/32219?r=x'), '32219');
@@ -244,6 +333,24 @@ test('lookup falls back to a fuzzy count when nothing matches', async () => {
     const res = await lookupVideo({ title: 'Unknown', url: 'https://app.reptyle.com/movies/11' });
     assert.equal(res.best, null);
     assert.equal(res.similar, 2);
+});
+test('lookup finds a scene by file name when neither URL nor title match', async () => {
+    const sent = [];
+    stash((body) => {
+        if (!body.variables.sf || !body.variables.sf.path) return scenes([]);
+        sent.push(body.variables.sf.path);
+        return scenes([
+            { id: '32', title: 'Other', urls: [], files: [{ basename: 'Two Cougars and more.mp4' }] },
+            { id: '33', title: '', urls: [], files: [{ basename: 'Two Cougars, One Cub - Krystal and Lexi (Part 1).mp4' }] }
+        ]);
+    });
+    const res = await lookupVideo({ title: 'Two Cougars, One Cub: Krystal and Lexi', url: 'https://app.reptyle.com/movies/14', fuzzy: false });
+    assert.deepEqual(sent, [{ value: '"two%cougars%one%cub%krystal%and%lexi"', modifier: 'INCLUDES' }], 'one quoted LIKE pattern, words in order');
+    assert.equal(res.best.id, '33', 'the file name must hold the whole title, not only some words');
+    assert.equal(res.via, 'file');
+    const short = await lookupVideo({ title: 'Part 1', url: 'https://app.reptyle.com/movies/15', fuzzy: false });
+    assert.equal(sent.length, 1, 'short titles get no file lookup');
+    assert.equal(short.best, null);
 });
 test('unreachable Stash is an error, never a false "Not in Stash", and is retried', async () => {
     stash(() => new Error('down'));

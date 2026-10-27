@@ -1,11 +1,9 @@
 // ==UserScript==
 // @name         Stash Exists Checker - Reptyle
 // @namespace    local.stash-exists-checker
-// @version      3.0.0
-// @description  Shows what is already in local Stash (localhost:9999) on supported sites (one adapter per site: Reptyle, Adult Time, Brazzers): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos.
-// @match        https://app.reptyle.com/*
-// @match        https://members.adulttime.com/*
-// @match        https://site-ma.brazzers.com/*
+// @version      4.0.0
+// @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, Adult Time, Brazzers; any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
+// @match        *://*/*
 // @updateURL    https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
 // @run-at       document-idle
@@ -13,6 +11,8 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_registerMenuCommand
+// @grant        GM_setClipboard
 // @connect      localhost
 // @noframes
 // ==/UserScript==
@@ -21,9 +21,10 @@
 
 (function () {
   'use strict';
-  const VERSION = '3.0.0';
-  // One adapter per site or network: everything page-specific lives here, the core below is generic.
-  // hosts: page hosts the adapter runs on (each needs an @match). detail/listing: model page paths.
+  const VERSION = '4.0.0';
+  // One adapter per site or network: everything page-specific lives here, the core below is generic. Sites set up with the
+  // picker are stored as JSON profiles and turned into the same adapter shape by profileSite (see "Site profiles" below).
+  // hosts: page hosts the adapter runs on. detail/listing: model page paths.
   // anchorSel: the panel goes after it; empty means a floating panel. nameFromUrl (optional): model name from a path, tried first.
   // videoTitleSel (optional): the title element in a video card when the title is not the text of a scene link.
   // videoCardSel/modelCardSel empty: a card is the largest ancestor of a link that still holds only that one scene or model.
@@ -33,7 +34,7 @@
   // performerUrlRe (optional): which saved performer URLs carry this site's model ids (modelKey is applied only to those).
   // sceneUrlParts: URL fragments that select this site's scenes in Stash; sceneKey/modelKey reduce a URL to the id both sides share.
   // scenePage/sceneTitleSel (optional): video page path and its title element; the page gets a badge from lookupVideo.
-  // cardDots (optional): every videoLinkSel link with a title (title attribute or a span) gets a dot: #<Stash id> or x.
+  // cardTags (optional): every video card with a title gets a corner tag: IN STASH (by URL), IN STASH · TITLE, IN STASH · FILE or NOT IN STASH.
   var SITES = [{
     id: 'reptyle',
     hosts: ['app.reptyle.com'],
@@ -57,7 +58,7 @@
     performerUrlRe: /^https?:\/\/app\.reptyle\.com\//i,
     scenePage: /^\/movies\/\d+/,
     sceneTitleSel: 'h1',
-    cardDots: true
+    cardTags: true
   }, {
     // Gamma network members area. A scene keeps its numeric id on every Gamma site (adulttime, evilangel, puretaboo ...),
     // so all /en/video/ URLs in Stash count. The members DOM is only partly known: the name comes from the URL,
@@ -85,7 +86,9 @@
     modelKey: extractGammaActorId,
     modelUrl: function (origin, key, href) { var u = new URL(href, origin); return u.origin + u.pathname.replace(/\/+$/, ''); },
     // Gamma actor ids differ between Gamma sites, so only Adult Time's own URLs count.
-    performerUrlRe: /^https?:\/\/(?:[a-z0-9-]+\.)?adulttime\.com\//i
+    performerUrlRe: /^https?:\/\/(?:[a-z0-9-]+\.)?adulttime\.com\//i,
+    // Members cards rarely have a Stash URL (Stash holds the tour URLs of many Gamma sites): tags also match by title and file.
+    cardTags: true
   }, {
     // Aylo members area. Members links are /scene/<id>/<slug> and /model/<id>/<slug>; Stash mostly holds the tour URLs
     // brazzers.com/video/<id>/<slug> and brazzers.com/pornstar/<id>/<slug>, with the same ids. Classes are build hashes,
@@ -109,7 +112,8 @@
     sceneKey: ayloId(/(^|\.)brazzers(network|vr)?\.com$/, 'video|scene'),
     modelKey: ayloId(/(^|\.)brazzers(network|vr)?\.com$/, 'model|pornstar'),
     modelUrl: function (origin, key, href) { var u = new URL(href, origin); return u.origin + u.pathname.replace(/\/+$/, ''); },
-    performerUrlParts: function (id) { return ['brazzers.com/model/' + id + '/', 'brazzers.com/pornstar/' + id + '/', 'brazzersnetwork.com/pornstar/' + id + '/']; }
+    performerUrlParts: function (id) { return ['brazzers.com/model/' + id + '/', 'brazzers.com/pornstar/' + id + '/', 'brazzersnetwork.com/pornstar/' + id + '/']; },
+    cardTags: true
   }];
   // Structured log sink shared by the local userscripts (docker-workspace/docs/userscripts.md): entries are batched to
   // the collector on localhost:7790 through GM_xmlhttpRequest. The buffer is memory-only; while the collector is down
@@ -171,24 +175,129 @@
     if (el.parentElement !== dock) dock.appendChild(el);
     return dock;
   }
+  // Site profiles: sites onboarded with the setup guide (Tampermonkey menu). A profile is JSON only (regexes as strings),
+  // stored by host under PROFILES_KEY; profileSite turns it into an adapter. On a built-in host a profile changes only
+  // DOM-level fields (name, title and video page selectors, card tags), never the key functions.
+  // Shape: { v, host, model: { path, nameSel, linkPrefix, key }, listing: { path, nameSel, linkPrefix, key },
+  //   card: { linkPrefix, titleSel, key }, video: { path, titleSel, linkPrefix, key }, stash: { sceneParts: [] }, tags }.
+  var PROFILES_KEY = 'profiles:v1';
+  // Setup guide state lives up here: on other sites the script returns before any later var is assigned.
+  var SETUP_ID = 'stash-exists-setup';
+  var picking = null;
+  var NEVER = /(?!)/;
+  var NO_LINKS = 'a[data-stash-exists-none]';
+  // Path words that name a kind of page; a link prefix runs up to the last of them (/en/video/, /en/pornstar/view/).
+  var KIND_WORDS = /^(?:videos?|scenes?|movies?|watch|v|clips?|updates?|trailers?|films?|episodes?|models?|pornstars?|performers?|actors?|actress(?:es)?|girls?|stars?|talents?|profiles?|view|channels?|sets?|galler(?:y|ies)|photos?)$/i;
+  function pathSegments(path) { return String(path || '').split(/[?#]/)[0].split('/').filter(Boolean); }
+  // Lowercase words are page kinds or sections; ids, slugs and the name itself are not.
+  function literalSegment(seg, name) { return /^[a-z][a-z_]{0,24}$/.test(seg) && !(name && normTitle(seg) === normTitle(name)); }
+  function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  function linkPrefixOf(path, name) {
+    var segs = pathSegments(path), run = [];
+    for (var i = 0; i < segs.length && literalSegment(segs[i], name); i++) run.push(segs[i]);
+    if (!run.length) return '';
+    var last = 0;
+    for (var j = 0; j < run.length; j++) if (KIND_WORDS.test(run[j])) last = j;
+    return '/' + run.slice(0, last + 1).join('/') + '/';
+  }
+  // Path pattern of a page: the link prefix literally, every later segment as an id (\d+) or any slug.
+  function pathPatternOf(path, name) {
+    var prefix = linkPrefixOf(path, name), rest = pathSegments(String(path).slice(prefix ? prefix.length - 1 : 0));
+    return '^' + escapeRe(prefix ? prefix.slice(0, -1) : '') + rest.map(function (s) { return '/' + (/^\d+$/.test(s) ? '\\d+' : '[^/]+'); }).join('') + '(?:/|$)';
+  }
+  function keyModeOf(path, prefix) { return pathSegments(String(path).slice(prefix ? prefix.length - 1 : 0)).some(function (s) { return /^\d+$/.test(s); }) ? 'id' : 'slug'; }
+  // Key of a link or a Stash URL: the last numeric path segment (id mode) or the last segment (slug mode). Links on the
+  // site itself must start with the prefix; URLs on other hosts (the tour URLs Stash holds) are keyed by path alone.
+  function profileKey(host, prefix, mode) {
+    return function (href) {
+      var u;
+      try { u = new URL(String(href || ''), 'https://' + host); } catch (e) { return null; }
+      var path = u.pathname;
+      if (u.hostname.toLowerCase() === host) { if (prefix && path.toLowerCase().indexOf(prefix.toLowerCase()) !== 0) return null; path = path.slice(prefix ? prefix.length - 1 : 0); }
+      var segs = pathSegments(path);
+      if (mode === 'slug') { var s = segs.length ? segs[segs.length - 1].toLowerCase().replace(/\.(?:html?|php|aspx?)$/, '') : ''; return s || null; }
+      for (var i = segs.length - 1; i >= 0; i--) if (/^\d+$/.test(segs[i])) return segs[i];
+      return null;
+    };
+  }
+  // Domain Stash URLs of this site most likely contain: members.example.com -> example.com, a.b.co.uk -> b.co.uk.
+  function registrableDomain(host) { var l = String(host || '').toLowerCase().split('.'); return l.slice(l.length > 2 && l[l.length - 2].length <= 3 && l[l.length - 1].length === 2 ? -3 : -2).join('.'); }
+  function selectorAttr(prefix) { return prefix ? 'a[href*="' + prefix.replace(/["\\]/g, '\\$&') + '"]' : NO_LINKS; }
+  function sameDomainUrl(origin, key, href) { var u = new URL(href, origin); return u.origin + u.pathname.replace(/\/+$/, ''); }
+  // Returns '' for a usable profile, else what is wrong with it.
+  function validProfile(p) {
+    if (!p || typeof p !== 'object' || typeof p.host !== 'string' || !/^[a-z0-9.-]+$/i.test(p.host)) return 'host missing';
+    var parts = ['model', 'listing', 'card', 'video'];
+    for (var i = 0; i < parts.length; i++) {
+      var x = p[parts[i]];
+      if (x === undefined || x === null) continue;
+      if (typeof x !== 'object') return parts[i] + ' is not an object';
+      if (x.path !== undefined) { try { new RegExp(x.path); } catch (e) { return parts[i] + '.path is not a regex'; } }
+      var sels = ['nameSel', 'titleSel'];
+      for (var j = 0; j < sels.length; j++) if (x[sels[j]] !== undefined && (typeof x[sels[j]] !== 'string' || x[sels[j]].length > 300)) return parts[i] + '.' + sels[j] + ' is not a selector';
+      if (x.linkPrefix !== undefined && !/^(?:\/[^"\\]*\/)?$/.test(x.linkPrefix)) return parts[i] + '.linkPrefix must start and end with /';
+      if (x.key !== undefined && x.key !== 'id' && x.key !== 'slug') return parts[i] + '.key must be id or slug';
+    }
+    if (p.stash && p.stash.sceneParts && !(Array.isArray(p.stash.sceneParts) && p.stash.sceneParts.every(function (s) { return typeof s === 'string' && s.trim(); }))) return 'stash.sceneParts must be a list of URL fragments';
+    return '';
+  }
+  // Adapter from a profile; base is the built-in adapter of the same host, if any.
+  function profileSite(p, base) {
+    var m = p.model || {}, l = p.listing || {}, c = p.card || {}, v = p.video || {};
+    if (base) {
+      var s = Object.assign({}, base, { profile: p });
+      if (m.nameSel) { s.headingSel = m.nameSel; s.headingFallbackSel = m.nameSel; }
+      if (l.nameSel) s.modelNameSel = l.nameSel;
+      if (c.titleSel) s.videoTitleSel = c.titleSel;
+      if (v.path && v.titleSel) { s.scenePage = new RegExp(v.path, 'i'); s.sceneTitleSel = v.titleSel; }
+      if (typeof p.tags === 'boolean') s.cardTags = p.tags;
+      return s;
+    }
+    var host = p.host.toLowerCase();
+    var cPrefix = c.linkPrefix || v.linkPrefix || '', mPrefix = m.linkPrefix || l.linkPrefix || '';
+    var parts = p.stash && p.stash.sceneParts && p.stash.sceneParts.length ? p.stash.sceneParts : [registrableDomain(host)];
+    var domains = parts.map(function (x) { return x.replace(/^https?:\/\//, '').split('/')[0]; }).filter(Boolean);
+    return {
+      id: 'profile:' + host, hosts: [host], profile: p, strictName: true,
+      detail: m.path ? new RegExp(m.path, 'i') : NEVER, listing: l.path ? new RegExp(l.path, 'i') : NEVER,
+      headingSel: m.nameSel || '', anchorSel: '', headingFallbackSel: m.nameSel || '',
+      videoCardSel: '', videoLinkSel: selectorAttr(cPrefix), videoTitleSel: c.titleSel || '',
+      modelLinkSel: selectorAttr(mPrefix), modelCardSel: '', modelEntrySel: '', modelNameSel: l.nameSel || '',
+      sceneUrlParts: cPrefix ? parts : [],
+      sceneKey: profileKey(host, cPrefix, c.key || v.key || 'id'), modelKey: profileKey(host, mPrefix, m.key || l.key || 'id'),
+      modelUrl: sameDomainUrl,
+      performerUrlRe: domains.length ? new RegExp('^https?://(?:[a-z0-9-]+\\.)*(?:' + domains.map(escapeRe).join('|') + ')/', 'i') : NEVER,
+      scenePage: v.path && v.titleSel ? new RegExp(v.path, 'i') : undefined, sceneTitleSel: v.titleSel, cardTags: !!p.tags && !!cPrefix
+    };
+  }
   var STASH_ORIGIN = 'http://localhost:9999';
   var ENDPOINT = STASH_ORIGIN + '/graphql';
-  // Single-video lookups (video pages and card dots): exact title and canonical URL; a free-text search only counts similar scenes.
+  // Single-video lookups (video pages and card tags): exact title and canonical URL, then file name; a free-text search only counts similar scenes.
   const QT = 'query($sf:SceneFilterType){findScenes(filter:{per_page:5},scene_filter:$sf){count scenes{id title urls}}}';
   const QF = 'query($q:String!){findScenes(filter:{q:$q,per_page:10}){count scenes{id title urls}}}';
+  const QP = 'query($sf:SceneFilterType){findScenes(filter:{per_page:5},scene_filter:$sf){count scenes{id title urls files{basename}}}}';
+  // File-name lookup for scenes without a matching URL or title: the title's words in order with anything between them.
+  // Stash runs a quoted path INCLUDES as one SQL LIKE '%...%', so % between the words skips punctuation and separators.
+  // Short titles ("Part 1") would match too much and get no file lookup.
+  function filePattern(title) { const words = normTitle(title).split(' ').filter(Boolean); return words.length >= 3 && words.join('').length >= 10 ? '"' + words.join('%') + '"' : ''; }
   const lookupCache = new Map();
   const norm = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
   const canonUrl = (u) => (u || '').split('?')[0].split('#')[0].trim();
   // Node unit tests load the pure helpers only (function declarations are hoisted); nothing else touches the page.
   if (typeof module === 'object' && module.exports) {
-    module.exports = { logPage: logPage, createLogSink: createLogSink, VERSION: VERSION, SITES: SITES, siteFor: siteFor, cachedList: cachedList, normUrl: normUrl, normTitle: normTitle, normName: normName, extractMovieId: extractMovieId, extractModelId: extractModelId, extractGammaSceneId: extractGammaSceneId, extractGammaActorId: extractGammaActorId, gammaNameFromUrl: gammaNameFromUrl, ayloId: ayloId, ayloNameFromUrl: ayloNameFromUrl, modelIdFromParam: modelIdFromParam, modelNameFromParam: modelNameFromParam, norm: norm, canonUrl: canonUrl, lookupVideo: lookupVideo };
+    module.exports = { logPage: logPage, createLogSink: createLogSink, VERSION: VERSION, SITES: SITES, siteFor: siteFor, cachedList: cachedList, normUrl: normUrl, normTitle: normTitle, normName: normName, extractMovieId: extractMovieId, extractModelId: extractModelId, extractGammaSceneId: extractGammaSceneId, extractGammaActorId: extractGammaActorId, gammaNameFromUrl: gammaNameFromUrl, ayloId: ayloId, ayloNameFromUrl: ayloNameFromUrl, modelIdFromParam: modelIdFromParam, modelNameFromParam: modelNameFromParam, norm: norm, canonUrl: canonUrl, lookupVideo: lookupVideo, linkPrefixOf: linkPrefixOf, pathPatternOf: pathPatternOf, keyModeOf: keyModeOf, profileKey: profileKey, registrableDomain: registrableDomain, validProfile: validProfile, profileSite: profileSite };
     return;
   }
-  var site = siteFor(location.hostname);
-  if (!site) return;
+  // Runs on every page. Other sites only get the setup guide in the Tampermonkey menu: no requests, no logs, no observer
+  // until the guide is used or a profile exists.
+  var profiles = loadProfiles();
+  var site = siteFor(location.hostname, profiles);
   var sink = createLogSink({ script: 'stash-exists-checker', version: VERSION });
   var log = sink.log;
   window.addEventListener('pagehide', function () { sink.flush(); });
+  try { GM_registerMenuCommand(site ? 'Stash: edit the setup of this site' : 'Stash: set up this site', function () { openSetup(true); }); } catch (e) {}
+  if (setupState().open) openSetup(false);
+  if (!site) return;
   log('info', 'started', '', { site: site.id });
   // Background list refreshes run every two seconds: log only when one starts or stops failing.
   var listFailing = {};
@@ -237,7 +346,13 @@
       return promise;
     };
   }
-  function siteFor(host) { host = String(host || '').toLowerCase(); for (var i = 0; i < SITES.length; i++) { for (var j = 0; j < SITES[i].hosts.length; j++) { var h = SITES[i].hosts[j]; if (host === h || host.slice(-h.length - 1) === '.' + h) return SITES[i]; } } return null; }
+  // Built-in adapter by host (subdomains included), a stored profile on top of it or on its own; null for other sites.
+  function siteFor(host, profiles) {
+    host = String(host || '').toLowerCase();
+    var p = profiles && Object.prototype.hasOwnProperty.call(profiles, host) && !validProfile(profiles[host]) ? profiles[host] : null;
+    for (var i = 0; i < SITES.length; i++) { for (var j = 0; j < SITES[i].hosts.length; j++) { var h = SITES[i].hosts[j]; if (host === h || host.slice(-h.length - 1) === '.' + h) return p ? profileSite(p, SITES[i]) : SITES[i]; } }
+    return p ? profileSite(p, null) : null;
+  }
   function extractGammaSceneId(href) { var m = String(href || '').match(/\/[a-z]{2}\/video\/(?:[^/?#]+\/)*?(\d+)\/?(?:[?#]|$)/i); return m ? m[1] : null; }
   function extractGammaActorId(href) { var m = String(href || '').match(/\/pornstar\/(?:view\/)?[^/?#]+\/(\d+)\/?(?:[?#]|$)/i); return m ? m[1] : null; }
   // Gamma puts the name in the URL ("Kenzie-Reeves"); some sites use a placeholder slug ("name", "-").
@@ -257,6 +372,7 @@
     var fromUrl = site.nameFromUrl ? site.nameFromUrl(location.pathname) : '';
     if (fromUrl) return fromUrl;
     var h = q(site.headingSel);
+    if (site.strictName) return h ? headingText(h).replace(/\s+/g, ' ').slice(0, 80) : '';
     if (h && headingText(h)) return headingText(h);
     var hs = site.headingFallbackSel ? Array.prototype.slice.call(document.querySelectorAll(site.headingFallbackSel)) : [];
     for (var i = 0; i < hs.length; i++) {
@@ -308,14 +424,21 @@
   function extractMovieId(href) { var m = String(href || '').match(/\/movies\/(\d+)/); return m ? m[1] : null; }
   function normTitle(s) { return String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[\u2018\u2019\u201c\u201d]/g, "'").replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim(); }
   // Outermost elements matching videoCardSel that link exactly one scene, so nested matches and whole lists are skipped.
-  function keyCount(el, linkSel, keyFn) { var keys = {}, n = 0; var ls = el ? el.querySelectorAll(linkSel) : []; for (var i = 0; i < ls.length; i++) { var k = keyFn(ls[i].getAttribute('href') || ls[i].href); if (k && !keys[k]) { keys[k] = 1; n++; } } return n; }
+  // Counted once per element and link selector during a scheduler pass (passMemo): every link of a structural list asks
+  // about the same ancestors, which made card detection quadratic.
+  function keyCount(el, linkSel, keyFn) { var memo = passMemo ? (passMemo.get(linkSel) || passMemo.set(linkSel, new Map()).get(linkSel)) : null; if (memo && memo.has(el)) return memo.get(el); var keys = {}, n = 0; var ls = el ? el.querySelectorAll(linkSel) : []; for (var i = 0; i < ls.length; i++) { var k = keyFn(ls[i].getAttribute('href') || ls[i].href); if (k && !keys[k]) { keys[k] = 1; n++; } } if (memo) memo.set(el, n); return n; }
   // Largest ancestor of the link that holds only this one key: its parent is the list holding several.
-  function structuralCard(link, linkSel, keyFn) { for (var el = link.parentElement, d = 0; el && el !== document.body && d < 8; el = el.parentElement, d++) { if (keyCount(el.parentElement, linkSel, keyFn) > 1) return el; } return link.parentElement; }
+  // A link with no list around it (a lone featured video) gets its highest ancestor within four levels, so marks never land
+  // inside a title element.
+  function structuralCard(link, linkSel, keyFn) { var lone = link.parentElement; for (var el = link.parentElement, d = 0; el && el !== document.body && d < 8; el = el.parentElement, d++) { if (keyCount(el.parentElement, linkSel, keyFn) > 1) return el; if (d < 4) lone = el; } return lone; }
   function videoCards() { if (!site.videoCardSel) { var seen = [], links = document.querySelectorAll(site.videoLinkSel); for (var li = 0; li < links.length; li++) { if (!site.sceneKey(links[li].getAttribute('href') || links[li].href)) continue; var c = structuralCard(links[li], site.videoLinkSel, site.sceneKey); if (c && seen.indexOf(c) < 0) seen.push(c); } return seen.filter(function (c) { return !seen.some(function (o) { return o !== c && o.contains(c); }); }); } var all = Array.prototype.filter.call(document.querySelectorAll(site.videoCardSel), function (c) { var keys = {}, n = 0; var ls = c.querySelectorAll(site.videoLinkSel); for (var i = 0; i < ls.length; i++) { var k = site.sceneKey(ls[i].getAttribute('href') || ls[i].href); if (k && !keys[k]) { keys[k] = 1; n++; } } return ls.length > 0 && n <= 1; }); return all.filter(function (c) { return !all.some(function (o) { return o !== c && o.contains(c); }); }); }
+  // The card of one video link, as videoCards sees it: the outermost videoCardSel match that still holds only this video
+  // (Adult Time's selector also matches the image link itself), else the structural card.
+  function cardFor(a) { var best = null; if (site.videoCardSel) { for (var el = a; el && el !== document.body; el = el.parentElement) { if (!el.matches(site.videoCardSel)) continue; if (keyCount(el, site.videoLinkSel, site.sceneKey) > 1) break; best = el; } } return best || structuralCard(a, site.videoLinkSel, site.sceneKey); }
   function cardTitleForCard(card) { if (site.videoTitleSel) { var te = card.querySelector(site.videoTitleSel); return te ? (te.innerText || te.textContent || '').trim() : ''; } var links = card.querySelectorAll(site.videoLinkSel); for (var ti = 0; ti < links.length; ti++) { var t = (links[ti].innerText || '').trim(); if (t) return t; } return ''; }
   function matchSceneForCard(card, urlMap, titleMap) { var as = card.querySelectorAll(site.videoLinkSel), id = null; for (var ai = 0; ai < as.length && !id; ai++) id = site.sceneKey(as[ai].getAttribute('href') || as[ai].href); if (!as.length) return null; if (id && urlMap && urlMap[id]) return urlMap[id]; if (titleMap) { var nt = normTitle(cardTitleForCard(card)); if (nt && titleMap[nt]) return titleMap[nt]; } return null; }
   function fetchScenesForUrlPart(part) { return (function next(page, acc) { return gql('query($h:String!,$p:Int!){ findScenes(scene_filter:{url:{value:$h, modifier:INCLUDES}}, filter:{per_page:500, page:$p}){ scenes{ id title urls } } }', { h: part, p: page }).then(function (data) { var ss = (data && data.findScenes && data.findScenes.scenes) || []; var all = acc.concat(ss); return (ss.length < 500 || page >= 20) ? all : next(page + 1, all); }); })(1, []); }
-  function buildSceneMap() { var map = {}; for (var l = 0; l < site.sceneUrlParts.length; l++) { var scenes = sceneRows[site.sceneUrlParts[l]] || []; for (var i = 0; i < scenes.length; i++) { var s = scenes[i]; for (var j = 0; j < ((s.urls) || []).length; j++) { var id = site.sceneKey(s.urls[j]); if (id && !map[id]) map[id] = s; } } } sceneMapCache = map; }
+  function buildSceneMap() { var map = {}; for (var l = 0; l < site.sceneUrlParts.length; l++) { var scenes = sceneRows[site.sceneUrlParts[l]] || []; for (var i = 0; i < scenes.length; i++) { var s = scenes[i]; for (var j = 0; j < ((s.urls) || []).length; j++) { var id = site.sceneKey(s.urls[j]); if (id && !map[id]) map[id] = s; } } } sceneMapCache = map; markDirty(); }
   // One stored list per URL part, so adapters that share a part (Gamma's /en/video/) share its scenes.
   var sceneLists = site.sceneUrlParts.map(function (part) { return cachedList(stashStore, 'scenes:' + part, function () { return fetchScenesForUrlPart(part); }, function (items) { sceneRows[part] = items; buildSceneMap(); }); });
   function ensureSceneMap() { return Promise.all(sceneLists.map(function (get) { return get(); })).then(function () { return sceneMapCache; }); }
@@ -325,7 +448,7 @@
   function unmarkVideoCard(card) { var b = card.querySelector('.' + VIDEO_BADGE_CLASS); if (b) b.remove(); var marked = card.querySelectorAll('[data-sml-video-green="1"]'); for (var cj = 0; cj < marked.length; cj++) { var m = marked[cj]; var chk = m.querySelector('[data-sml-video-check]'); if (chk) chk.remove(); m.style.color = ''; m.style.fontWeight = ''; m.removeAttribute('data-sml-video-green'); m.removeAttribute('title'); } }
   // Runs on every page and every re-check: marks cards whose scene is in Stash and drops marks that no longer fit
   // (single-page apps reuse card elements for other scenes). Titles only count when a performer's scenes are given.
-  function markVideos(urlMap, titleMap) { var cards = videoCards(); for (var i = 0; i < cards.length; i++) { var card = cards[i]; var hit = matchSceneForCard(card, urlMap || {}, titleMap || null); var old = card.querySelector('.' + VIDEO_BADGE_CLASS); if (old && (!hit || old.getAttribute('data-sml-key') !== String(hit.id))) { unmarkVideoCard(card); old = null; } if (!hit) continue; if (!old) { try { if (getComputedStyle(card).position === 'static') card.style.position = 'relative'; } catch (e) {} var b = document.createElement('a'); b.className = VIDEO_BADGE_CLASS; b.setAttribute('data-sml-key', String(hit.id)); b.textContent = '\u2713 IN STASH'; b.href = STASH_ORIGIN + '/scenes/' + hit.id; b.target = '_blank'; b.rel = 'noopener'; b.title = (hit.title || '') + ' (Stash id ' + hit.id + ')'; b.style.cssText = 'position:absolute;top:6px;left:6px;z-index:5;background:#16a34a;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.4);'; b.addEventListener('click', function (ev) { ev.stopPropagation(); }); card.appendChild(b); } try { styleVideoTitle(card, hit); } catch (e2) {} } }
+  function markVideos(urlMap, titleMap, cards) { cards = cards || videoCards(); for (var i = 0; i < cards.length; i++) { var card = cards[i]; var hit = matchSceneForCard(card, urlMap || {}, titleMap || null); var old = card.querySelector('.' + VIDEO_BADGE_CLASS); if (old && (!hit || old.getAttribute('data-sml-key') !== String(hit.id))) { unmarkVideoCard(card); old = null; } if (!hit) continue; if (!old) { var tag = card.querySelector('.stash-exists-tag'); if (tag) tag.remove(); try { if (getComputedStyle(card).position === 'static') card.style.position = 'relative'; } catch (e) {} var b = document.createElement('a'); b.className = VIDEO_BADGE_CLASS; b.setAttribute('data-sml-key', String(hit.id)); b.textContent = '\u2713 IN STASH'; b.href = STASH_ORIGIN + '/scenes/' + hit.id; b.target = '_blank'; b.rel = 'noopener'; b.title = (hit.title || '') + ' (Stash id ' + hit.id + ')'; b.style.cssText = 'position:absolute;top:6px;left:6px;z-index:5;background:#16a34a;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.4);'; b.addEventListener('click', function (ev) { ev.stopPropagation(); }); card.appendChild(b); } try { styleVideoTitle(card, hit); } catch (e2) {} } }
   function extractModelId(href) { var m = String(href || '').match(/\/models\/(\d+)/); return m ? m[1] : null; }
   function modelCardForLink(a) { if (!site.modelCardSel) return structuralCard(a, site.modelLinkSel, site.modelKey) || a; try { var card = a.closest(site.modelCardSel); if (card) return card; } catch (e) {} var el = a; for (var mi = 0; mi < 4 && el; mi++) { el = el.parentElement; if (el && el.matches && site.modelEntrySel && el.matches(site.modelEntrySel)) return el; } return a.parentElement || a; }
   function modelNameEl(card) { return (site.modelNameSel && card.querySelector(site.modelNameSel)) || card.querySelector('span'); }
@@ -334,7 +457,7 @@
   function normName(s) { return normTitle(s); }
   function performerNames(p) { return [p.name].concat(p.alias_list || []); }
   function fetchPerformerList() { return (function next(page, acc) { return gql('query($p:Int!){ findPerformers(filter:{per_page:500, page:$p}){ count performers{ id name alias_list urls } } }', { p: page }).then(function (data) { var ps = (data && data.findPerformers && data.findPerformers.performers) || []; var all = acc.concat(ps); return (ps.length < 500 || page >= 10) ? all : next(page + 1, all); }); })(1, []); }
-  function buildPerformerMaps(all) { var map = {}; for (var i = 0; i < all.length; i++) { var k = normName(all[i].name); if (k && !map[k]) map[k] = all[i]; } for (var ai = 0; ai < all.length; ai++) { var al = all[ai].alias_list || []; for (var aj = 0; aj < al.length; aj++) { var ak = normName(al[aj]); if (ak && !map[ak]) map[ak] = all[ai]; } } var keys = {}; for (var ki = 0; ki < all.length; ki++) { var us = all[ki].urls || []; for (var kj = 0; kj < us.length; kj++) { if (site.performerUrlRe && !site.performerUrlRe.test(us[kj])) continue; var kk = site.modelKey(us[kj]); if (kk && !keys[kk]) keys[kk] = all[ki]; } } performerKeyMapCache = keys; performerMapCache = map; }
+  function buildPerformerMaps(all) { var map = {}; for (var i = 0; i < all.length; i++) { var k = normName(all[i].name); if (k && !map[k]) map[k] = all[i]; } for (var ai = 0; ai < all.length; ai++) { var al = all[ai].alias_list || []; for (var aj = 0; aj < al.length; aj++) { var ak = normName(al[aj]); if (ak && !map[ak]) map[ak] = all[ai]; } } var keys = {}; for (var ki = 0; ki < all.length; ki++) { var us = all[ki].urls || []; for (var kj = 0; kj < us.length; kj++) { if (site.performerUrlRe && !site.performerUrlRe.test(us[kj])) continue; var kk = site.modelKey(us[kj]); if (kk && !keys[kk]) keys[kk] = all[ki]; } } performerKeyMapCache = keys; performerMapCache = map; markDirty(); }
   // The performer list is the same query on every site, so one stored copy serves them all.
   var performerList = cachedList(stashStore, 'performers', fetchPerformerList, buildPerformerMaps);
   function fetchPerformerMap() { return performerList().then(function () { return performerMapCache; }); }
@@ -462,14 +585,15 @@
       row.appendChild(btn);
     }
     var vidLine = line('', '#94a3b8');
-    placePanel(anchor, div);
-    performerFound = true;
+    // Marked before placing: a panel drawn while folded keeps its summary lines.
     vidLine.setAttribute('data-sml-video-count', '1');
     vidLine.setAttribute('data-sml-keep', '1');
+    placePanel(anchor, div);
+    performerFound = true;
     Promise.all([ensureSceneMap(), fetchPerformerTitleMap(p.id)]).then(function (maps) { markVideos(maps[0] || {}, maps[1] || {}); updateVideoCount(); }).catch(function (e) { log('warn', 'video check failed', e && e.message, { performerId: p.id }); vidLine.textContent = 'Video check failed.'; });
   }
   // Recounted on every re-check too, because single-page apps often render the video cards after the panel.
-  function updateVideoCount() { var vidLine = document.querySelector('#' + PANEL_ID + ' [data-sml-video-count]'); if (!vidLine) return; var urlMap = sceneMapCache || {}, titleMap = performerTitleMapCache; var cards = videoCards(); var total = 0, hit = 0; for (var k = 0; k < cards.length; k++) { var la = cards[k].querySelector(site.videoLinkSel); if (!la) continue; var mid = site.sceneKey(la.getAttribute('href') || la.href); if (!mid && !cardTitleForCard(cards[k])) continue; total++; if (matchSceneForCard(cards[k], urlMap, titleMap)) hit++; } vidLine.textContent = total ? ('Videos on this page in Stash: ' + hit + '/' + total) : 'No videos found on this page.'; vidLine.style.color = hit ? '#86efac' : '#94a3b8'; }
+  function updateVideoCount(cards) { var vidLine = document.querySelector('#' + PANEL_ID + ' [data-sml-video-count]'); if (!vidLine) return; var urlMap = sceneMapCache || {}, titleMap = performerTitleMapCache; cards = cards || videoCards(); var total = 0, hit = 0; for (var k = 0; k < cards.length; k++) { var la = cards[k].querySelector(site.videoLinkSel); if (!la) continue; var mid = site.sceneKey(la.getAttribute('href') || la.href); if (!mid && !cardTitleForCard(cards[k])) continue; total++; if (matchSceneForCard(cards[k], urlMap, titleMap)) hit++; } vidLine.textContent = total ? ('Videos on this page in Stash: ' + hit + '/' + total) : 'No videos found on this page.'; vidLine.style.color = hit ? '#86efac' : '#94a3b8'; }
   function paramModelId() { return site.modelParam ? modelIdFromParam(location.search, site.modelParam) : null; }
   function paramModelName() { return site.modelNameParam ? modelNameFromParam(location.search, site.modelNameParam) : null; }
   function isDetailPage() { return site.detail.test(location.pathname) || !!paramModelId() || !!paramModelName(); }
@@ -489,6 +613,7 @@
       return null;
     });
   }
+  var detailLookups = 0;
   function runDetail(force) {
     if (!isDetailPage()) { removePanel(); resetHeading(); performerFound = false; performerTitleMapCache = null; performerTitleMapFor = null; return; }
     // A panel drawn without a name is redrawn once the page links the model by name.
@@ -505,16 +630,21 @@
     var pageUrl = pid ? ((known && known.url) || site.modelUrl(location.origin, pid, '/model/' + pid)) : pname ? ((known && known.url) || '') : getPageUrl();
     var modelId = pid || detailId;
     if (!name && !modelId) return;
+    // Picked sites wait for the picked name element; there is no title or id fallback to guess from.
+    if (site.strictName && !name) return;
     if (name && (detailId || pid)) rememberModel(detailId || pid, name, pageUrl);
     if (name && detailId) rememberModel('name:' + normName(name), name, pageUrl);
     namelessPanel = !name;
     var label = name || ('model #' + modelId);
     renderLoading(anchor, label);
+    // Only the newest lookup may draw: an older one that answers late would replace the current panel.
+    var lookup = ++detailLookups;
     findPerformerById(modelId).then(function (byId) {
       if (byId) return { count: 1, performers: [byId], byId: true };
       if (!name) return { count: 0, performers: [] };
       return gql('query($q:String!){ findPerformers(filter:{q:$q, per_page:10}){ count performers{ id name alias_list urls } } }', { q: name }).then(function (data) { return (data && data.findPerformers) || { count: 0, performers: [] }; });
     }).then(function (fp) {
+      if (lookup !== detailLookups) return;
       var exact = fp.byId ? fp.performers[0] : null;
       if (exact && pid && !name) rememberModel(pid, exact.name, pageUrl);
       // Names first, then aliases, so a performer called exactly this wins over one that only lists it as an alias.
@@ -524,12 +654,13 @@
       var a2 = findAnchor();
       if (a2 || !site.anchorSel) render(a2, { name: label, pageUrl: pageUrl, count: fp.count, exact: exact, candidates: fp.performers.slice(0, 5) });
     }).catch(function (e) {
+      if (lookup !== detailLookups) return;
       log('warn', 'stash unreachable', e.message, { view: 'model' });
       var a3 = findAnchor();
       if (a3 || !site.anchorSel) render(a3, { name: label, pageUrl: pageUrl, error: e.message });
     });
   }
-  // Video page badge and card dots (adapters with scenePage/cardDots). Each video is looked up on its own by exact
+  // Video page badge and card tags (adapters with scenePage/cardTags). Each video is looked up on its own by exact
   // title and canonical URL; results are cached per title + URL, failures are not.
   function postGql(query, variables) {
     return new Promise((resolve, reject) => {
@@ -551,7 +682,8 @@
   async function lookupVideo(opts) {
     const title = (opts && opts.title || '').trim();
     const url = canonUrl(opts && opts.url);
-    const key = norm(title) + ' || ' + url;
+    const fuzzy = !(opts && opts.fuzzy === false);
+    const key = norm(title) + ' || ' + url + (fuzzy ? '' : ' || nofuzzy');
     if (lookupCache.has(key)) return lookupCache.get(key);
     const p = (async () => {
       try {
@@ -568,11 +700,21 @@
           if (r.k === 't') { const exact = scenes.find((s) => norm(s.title) === norm(title)) || null; byTitle = { count, exact, scenes: scenes.slice(0, 5) }; }
           else { const exact = scenes.find((s) => (s.urls || []).some((x) => { const c = x.split('?')[0].split('#')[0]; return c.includes(url) || url.includes(c); })) || scenes[0] || null; byUrl = { count, exact, scenes: scenes.slice(0, 5) }; }
         }
+        // Neither matched: a file whose name holds the whole title (checked here too, not only by Stash's LIKE).
+        let byFile = null;
+        const pattern = !byTitle?.exact && !byUrl?.exact ? filePattern(title) : '';
+        if (pattern) {
+          try {
+            const fd = await postGql(QP, { sf: { path: { value: pattern, modifier: 'INCLUDES' } } });
+            const scenes = fd?.data?.findScenes?.scenes || [], nt = normTitle(title);
+            byFile = { count: fd?.data?.findScenes?.count || 0, exact: scenes.find((s) => (s.files || []).some((f) => normTitle(String(f.basename || '').replace(/\.[^.]+$/, '')).includes(nt))) || null };
+          } catch (e) {}
+        }
         let similar = 0;
-        if (!byTitle?.exact && !byUrl?.exact && title) { try { const fb = await postGql(QF, { q: title }); similar = (fb?.data?.findScenes?.count) || 0; } catch (e) {} }
-        const best = (byUrl && byUrl.exact) || (byTitle && byTitle.exact) || null;
-        const via = (byUrl?.exact && byTitle?.exact) ? 'url+title' : (byUrl?.exact ? 'url' : (byTitle?.exact ? 'title' : ''));
-        return { byTitle, byUrl, best, via, similar, cleanUrl: url, title };
+        if (fuzzy && !byTitle?.exact && !byUrl?.exact && !byFile?.exact && title) { try { const fb = await postGql(QF, { q: title }); similar = (fb?.data?.findScenes?.count) || 0; } catch (e) {} }
+        const best = (byUrl && byUrl.exact) || (byTitle && byTitle.exact) || (byFile && byFile.exact) || null;
+        const via = (byUrl?.exact && byTitle?.exact) ? 'url+title' : (byUrl?.exact ? 'url' : (byTitle?.exact ? 'title' : (byFile?.exact ? 'file' : '')));
+        return { byTitle, byUrl, byFile, best, via, similar, cleanUrl: url, title };
       } catch (e) { return { error: String((e && e.message) || e).slice(0, 180) }; }
     })();
     lookupCache.set(key, p);
@@ -601,7 +743,10 @@
     badge.target = '_blank';
     badge.href = STASH_ORIGIN + '/search?q=' + encodeURIComponent(title);
     h1.after(badge);
-    const res = await lookupVideo({ title, url: cleanUrl });
+    // A scene id in the stored scene list answers without a request; otherwise exact title and canonical URL are asked.
+    const pageKey = site.sceneKey(location.pathname);
+    const listed = sceneMapCache && pageKey ? sceneMapCache[pageKey] : null;
+    const res = listed ? { best: listed, via: 'url' } : await lookupVideo({ title, url: cleanUrl });
     if (!badge.isConnected || q(site.sceneTitleSel)?.innerText.trim() !== title) return;
     if (!res || res.error) log('warn', 'stash unreachable', res?.error || 'no result', { view: 'detail' });
     else log('info', 'detail checked', '', { inStash: !!res.best, sceneId: res.best?.id, via: res.via || undefined, byTitle: res.byTitle?.count || 0, byUrl: res.byUrl?.count || 0, similar: res.similar || 0 });
@@ -609,8 +754,9 @@
     if (res.best) { badge.textContent = 'In Stash #' + res.best.id + ' (' + res.via + ')'; badge.className = 'stash-yes'; badge.href = STASH_ORIGIN + '/scenes/' + res.best.id; badge.title = 'Matched by ' + res.via + '\nTitle: ' + title + '\nURL: ' + cleanUrl + '\nStash: ' + (res.best.title || '') + '\n' + (res.best.urls || []).join('\n'); }
     else { const sim = res.similar || res.byTitle?.count || 0; badge.textContent = sim ? ('Not in Stash (' + sim + ' similar)') : 'Not in Stash'; badge.className = 'stash-no'; badge.title = 'No match\nTitle EQUALS: ' + (res.byTitle?.count || 0) + '\nURL INCLUDES ' + cleanUrl + ': ' + (res.byUrl?.count || 0) + (sim ? '\nFuzzy similar: ' + sim : ''); }
   }
-  // Card dots go out four at a time with a 150 ms pause. A scene id already in the stored scene list answers at once,
-  // so only cards Stash does not hold by URL cost a lookup.
+  // Card tags go out four at a time with a 150 ms pause. A scene id already in the stored scene list answers at once,
+  // so only cards Stash does not hold by URL cost a lookup: exact title, then file name (the URL query only while the
+  // list is missing, since the list already holds every URL of the site's scenes).
   const cardQueue = [];
   let cardBusy = false;
   async function pumpCards() {
@@ -620,19 +766,16 @@
     try {
       await ensureSceneMap().catch(() => {});
       while (cardQueue.length) {
-        const batch = cardQueue.splice(0, 4), sceneMap = sceneMapCache || {};
+        const batch = cardQueue.splice(0, 4), sceneMap = sceneMapCache || {}, haveList = !!sceneMapCache;
         await Promise.all(batch.map(async (job) => {
           try {
             const listed = job.key ? sceneMap[job.key] : null;
-            const res = listed ? { best: listed, via: 'url' } : await lookupVideo({ title: job.title, url: job.url });
+            const res = listed ? { best: listed, via: 'url' } : await lookupVideo({ title: job.title, url: haveList ? '' : job.url, fuzzy: false });
             tally.checked++;
             if (listed) tally.fromList++;
             if (res?.best) tally.inStash++;
             if (res?.error) tally.failed++;
-            if (!job.el.isConnected) return;
-            job.el.textContent = res?.best ? '#' + res.best.id : 'x';
-            job.el.classList.toggle('stash-yes', !!res?.best);
-            job.el.title = res?.best ? ('In Stash via ' + res.via + ': ' + res.best.title + ' (#' + res.best.id + ')') : ('Not in Stash\n' + job.title + '\n' + (job.url || ''));
+            showTag(job, res);
           } catch (e) { tally.failed++; }
         }));
         if (cardQueue.length) await new Promise((r) => setTimeout(r, 150));
@@ -642,45 +785,350 @@
       log(tally.failed ? 'warn' : 'debug', 'cards checked', '', tally);
     }
   }
+  // One tag per video card, in the card's top-left corner like the "IN STASH" badge and never inside the title: the card
+  // is the videoCardSel match or the largest element around the link that holds only this video (carousels included).
   function checkCards() {
-    if (!site.cardDots) return;
+    if (!site.cardTags) return;
     document.querySelectorAll(site.videoLinkSel).forEach((a) => {
       const key = site.sceneKey(a.getAttribute('href') || '');
       if (!key) return;
-      const title = (a.getAttribute('title') || videoTitle(a.querySelector('span')) || '').trim();
+      const card = cardFor(a);
+      if (!card || card.dataset.stashQueued === key) return;
+      // A single-page app reused the card for another video: its old tag goes, the new video is checked.
+      if (card.dataset.stashQueued) { const old = card.querySelector('.stash-exists-tag'); if (old) old.remove(); }
+      const title = site.videoTitleSel ? videoTitle(card.querySelector(site.videoTitleSel)) : (a.getAttribute('title') || videoTitle(a.querySelector('span')) || videoTitle(a)).trim();
       if (title.length < 3) return;
-      const wrap = a.parentElement || a;
-      if (wrap.querySelector(':scope > .stash-card-dot')) return;
-      if (a.dataset.stashQueued) return;
-      a.dataset.stashQueued = '1';
-      const dot = document.createElement('span');
-      dot.className = 'stash-card-dot';
-      dot.textContent = '?';
-      dot.title = 'Checking Stash: ' + title + '\n' + canonUrl(a.href);
-      wrap.style.position = wrap.style.position || 'relative';
-      wrap.prepend(dot);
-      cardQueue.push({ title, url: canonUrl(a.href), key, el: dot });
+      card.dataset.stashQueued = key;
+      cardQueue.push({ title, url: canonUrl(a.href), key, card });
     });
     if (cardQueue.length) pumpCards();
   }
+  // Tag text and colour by how the video was found: URL (scene id), exact title, or file name; grey when it is not in
+  // Stash. Nothing is shown when Stash did not answer, so an outage never reads as "not in Stash".
+  const TAGS = { url: ['✓ IN STASH', '#16a34a'], title: ['✓ IN STASH · TITLE', '#0f766e'], file: ['✓ IN STASH · FILE', '#1d4ed8'], none: ['NOT IN STASH', 'rgba(63,63,70,.85)'] };
+  function showTag(job, res) {
+    const card = job.card;
+    if (!card.isConnected || card.dataset.stashQueued !== job.key || !res || res.error) return;
+    // The id badge of markVideos already says it; one corner, one tag.
+    if (card.querySelector('.' + VIDEO_BADGE_CLASS + ', .stash-exists-tag')) return;
+    const kind = res.best ? (/url/.test(res.via) ? 'url' : res.via) : 'none';
+    const tag = document.createElement(res.best ? 'a' : 'span');
+    tag.className = 'stash-exists-tag' + (res.best ? ' stash-yes' : '');
+    tag.setAttribute('data-stash-via', kind);
+    tag.textContent = TAGS[kind][0];
+    tag.style.background = TAGS[kind][1];
+    tag.title = res.best ? 'In Stash via ' + res.via + ': ' + (res.best.title || '') + ' (#' + res.best.id + ')' : 'Not in Stash (no URL, title or file name match)\n' + job.title + '\n' + job.url;
+    if (res.best) {
+      tag.href = STASH_ORIGIN + '/scenes/' + res.best.id;
+      tag.target = '_blank';
+      tag.rel = 'noopener';
+      tag.addEventListener('click', (ev) => ev.stopPropagation());
+    }
+    try { if (getComputedStyle(card).position === 'static') card.style.position = 'relative'; } catch (e) {}
+    card.appendChild(tag);
+  }
   function run(force) { if (isDetailPage()) return runDetail(force); if (site.listing.test(location.pathname)) return runListing(force); removePanel(); resetHeading(); clearModelMarks(); performerFound = false; performerTitleMapCache = null; performerTitleMapFor = null; }
-  var tries = 0;
-  var boot = setInterval(function () { tries++; if (findAnchor() || !site.anchorSel || q(site.modelEntrySel)) { clearInterval(boot); run(true); } else if (tries > 40) clearInterval(boot); }, 500);
-  // Every page: use the stored Stash lists at once (refetched when older than 10 minutes), then re-check marks every two seconds.
+  // One scheduler follows the page: DOM changes (mutation observer), in-app navigation (pushState/popstate), arriving Stash
+  // lists, and a 2-second heartbeat that also refreshes the lists (stored copies at once, refetched after 10 minutes).
+  // A pass runs only when something changed, and the mutations a pass makes itself are dropped (takeRecords), so an idle
+  // page costs nothing; structural card lookups are memoized for the length of a pass.
   var scenesResult = listResult('scenes'), performersResult = listResult('performers');
   function refreshLists() { ensureSceneMap().then(scenesResult[0], scenesResult[1]); fetchPerformerMap().then(performersResult[0], performersResult[1]); }
+  var dirty = true, lastHref = '', tickTimer = 0, passMemo = null, lastPass = 0;
+  var checks = !!(site.scenePage || site.cardTags);
+  var observer = new MutationObserver(markDirty);
+  // DOM changes run a pass at most once a second (a running player clock changes text all the time); navigation at once.
+  function markDirty() { dirty = true; schedule(Math.max(300, lastPass + 1000 - Date.now())); }
+  function markNavigation() { dirty = true; clearTimeout(tickTimer); tickTimer = 0; schedule(0); }
+  function schedule(ms) { if (!tickTimer) tickTimer = setTimeout(tick, ms); }
+  function tick() {
+    tickTimer = 0;
+    if (!dirty && location.href === lastHref) return;
+    dirty = false;
+    lastHref = location.href;
+    lastPass = Date.now();
+    passMemo = new Map();
+    try {
+      try { if (sceneMapCache) { var cards = videoCards(); markVideos(sceneMapCache, performerFound ? performerTitleMapCache : null, cards); updateVideoCount(cards); } } catch (e) {}
+      try { if (performerMapCache) { if (site.listing.test(location.pathname)) markModelCards(performerMapCache); else markModelLinks(); } } catch (e2) {}
+      try { run(false); } catch (e3) {}
+      if (checks) { checkDetail(); checkCards(); }
+    } finally { passMemo = null; observer.takeRecords(); }
+  }
+  // Video page badge and card tags (top left of the card, like the "IN STASH" badge).
+  if (checks) GM_addStyle('#stash-exists-badge{display:inline-block;margin-left:12px;padding:4px 12px;border-radius:999px;font-size:13px;font-weight:800;vertical-align:middle;color:#fff;text-decoration:none;cursor:pointer}.stash-yes{background:#16a34a}.stash-no{background:#52525b}.stash-err{background:#b45309}.stash-exists-tag{position:absolute!important;top:6px;left:6px;z-index:5;padding:2px 8px;border-radius:6px;font:700 11px/1.4 system-ui,sans-serif;color:#fff!important;text-decoration:none!important;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)}');
+  ['pushState', 'replaceState'].forEach(function (name) { var orig = history[name]; history[name] = function () { var r = orig.apply(this, arguments); markNavigation(); return r; }; });
+  window.addEventListener('popstate', markNavigation);
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['href'] });
   refreshLists();
-  setInterval(function () { refreshLists(); try { if (sceneMapCache) { markVideos(sceneMapCache, performerFound ? performerTitleMapCache : null); updateVideoCount(); } } catch (e) {} try { if (performerMapCache) { if (site.listing.test(location.pathname)) markModelCards(performerMapCache); else markModelLinks(); } } catch (e2) {} run(false); }, 2000);
-  // Video page badge and card dots follow in-app navigation; the dot sits top right, the "IN STASH" card badge top left.
-  if (site.scenePage || site.cardDots) {
-    GM_addStyle('#stash-exists-badge{display:inline-block;margin-left:12px;padding:4px 12px;border-radius:999px;font-size:13px;font-weight:800;vertical-align:middle;color:#fff;text-decoration:none;cursor:pointer}.stash-yes{background:#16a34a}.stash-no{background:#52525b}.stash-err{background:#b45309}.stash-card-dot{position:absolute;top:6px;right:6px;z-index:5;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:800;color:#fff;background:#52525b;pointer-events:none}.stash-card-dot.stash-yes{background:#16a34a}');
-    let t = 0;
-    const schedule = () => { clearTimeout(t); t = setTimeout(() => { checkDetail(); checkCards(); }, 400); };
-    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
-    const _push = history.pushState;
-    history.pushState = function (...args) { const r = _push.apply(this, args); schedule(); return r; };
-    window.addEventListener('popstate', schedule);
-    checkDetail();
-    checkCards();
+  schedule(0);
+  setInterval(function () { refreshLists(); schedule(0); }, 2000);
+
+  // Setup guide (Tampermonkey menu "Stash: set up this site", on every page). The user picks the performer name, a video
+  // title in a list, the title on a video page and, optionally, a model name in a model list, on the site's own pages.
+  // Each pick becomes one part of the site's profile and is logged with its page context (event "site onboarding": the
+  // element, its ancestors, the derived selectors and URL rules, links found), so built-in support can be written from the
+  // log. "Save and turn on" stores the profile and the site works at once. Guide and draft survive navigation (GM storage
+  // per host). Only function declarations here (SETUP_ID and picking are above the module guard): on other sites the
+  // script stops before any later var is assigned.
+  function setupPicks() {
+    return [
+      { kind: 'model', label: 'Performer name', where: 'on a performer/model page', hint: 'Open a performer page, press Pick, then click the performer name.' },
+      { kind: 'card', label: 'Video title in a list', where: 'on a page that lists videos', hint: 'Open a page with video cards, press Pick, then click the title of one video.' },
+      { kind: 'video', label: 'Video page title', where: 'on a single video page', hint: 'Open one video, press Pick, then click its title.' },
+      { kind: 'listing', label: 'Model name in a model list', where: 'on a page that lists models (optional)', hint: 'Open the list of models, press Pick, then click the name of one model.' }
+    ];
+  }
+  function setupHost() { return location.hostname.toLowerCase(); }
+  function setupKey() { return 'setup:v1:' + setupHost(); }
+  function setupState() { try { var s = GM_getValue(setupKey(), null); return s && typeof s === 'object' ? s : {}; } catch (e) { return {}; } }
+  function saveSetupState(s) { try { GM_setValue(setupKey(), s); } catch (e) {} }
+  function loadProfiles() { try { var p = GM_getValue(PROFILES_KEY, null); return p && typeof p === 'object' ? p : {}; } catch (e) { return {}; } }
+  function draftParts(d) { return d.stash && d.stash.sceneParts && d.stash.sceneParts.length ? d.stash.sceneParts : [registrableDomain(d.host)]; }
+  function cssEsc(s) { return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, '\\$&'); }
+  // Class names that look generated (css-1x2y, e1vusg2z1, sc-AbC12) change with every build of a site, so they are skipped.
+  function stableClasses(el) { return Array.prototype.filter.call(el.classList || [], function (c) { return /^[A-Za-z][\w-]{1,40}$/.test(c) && !/\d{3,}|^(?:css|sc|jsx|svelte|stash)-|^[a-z]+[0-9][a-z0-9]{4,}$/i.test(c) && !/^(?:active|hover|focus|selected|open|is-|has-)/.test(c); }).slice(0, 2); }
+  function selectorPart(el) {
+    if (el.id && /^[A-Za-z][\w-]{0,40}$/.test(el.id) && !/\d{3,}/.test(el.id) && !/^stash-/.test(el.id)) return '#' + cssEsc(el.id);
+    return el.tagName.toLowerCase() + stableClasses(el).map(function (c) { return '.' + cssEsc(c); }).join('');
+  }
+  function firstMatchIs(root, sel, el) { try { return root.querySelector(sel) === el; } catch (e) { return false; } }
+  // Shortest selector whose first match in root is el: the element itself, then with up to five ancestors, else an
+  // :nth-of-type path (exact but fragile, so only the last resort).
+  function selectorFor(el, root) {
+    root = root || document;
+    var sel = selectorPart(el), cur = el;
+    for (var d = 0; d < 6; d++) {
+      if (firstMatchIs(root, sel, el)) return sel;
+      cur = cur.parentElement;
+      if (!cur || cur === root || cur === document.documentElement) break;
+      sel = selectorPart(cur) + ' ' + sel;
+    }
+    var path = [];
+    for (cur = el; cur && cur !== root && cur !== document.documentElement; cur = cur.parentElement) {
+      var n = 1;
+      for (var s = cur.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === cur.tagName) n++;
+      path.unshift(cur.tagName.toLowerCase() + ':nth-of-type(' + n + ')');
+    }
+    return (root === document ? '' : ':scope > ') + path.join(' > ');
+  }
+  function textOf(el) { return (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' '); }
+  // What the log gets about a picked element: text, ancestor chain and markup, with query strings cut from every URL
+  // (session tokens, referral ids, signed links).
+  function describeElement(el) {
+    var chain = [];
+    for (var cur = el, d = 0; cur && cur !== document.body && d < 8; cur = cur.parentElement, d++) chain.push(cur.tagName.toLowerCase() + (cur.id ? '#' + cur.id : '') + Array.prototype.map.call(cur.classList, function (c) { return '.' + c; }).join(''));
+    var html = el.outerHTML.replace(/\b(href|src|srcset|data-src|poster)="([^"]*)"/gi, function (m0, a, v) { return a + '="' + v.split(/[?#]/)[0] + '"'; }).replace(/\s+/g, ' ');
+    return { text: textOf(el).slice(0, 120), chain: chain, html: html.slice(0, 1500) };
+  }
+  // The link of a picked title or name: its own link, else a link in the smallest ancestor that has one (one with a
+  // numeric path segment first, since that is usually the video or model page).
+  function linkNear(el) {
+    var own = el.closest('a[href]');
+    if (own) return own;
+    for (var cur = el.parentElement, d = 0; cur && cur !== document.body && d < 6; cur = cur.parentElement, d++) {
+      var ls = Array.prototype.filter.call(cur.querySelectorAll('a[href]'), function (a) { return pathSegments(new URL(a.href, location.href).pathname).length; });
+      if (ls.length) return ls.filter(function (a) { return /\/\d+(?:[/?#]|$)/.test(new URL(a.href, location.href).pathname); })[0] || ls[0];
+    }
+    return null;
+  }
+  function derivePick(kind, el) {
+    var text = textOf(el), page = location.pathname;
+    if (!text) return { error: 'That element has no text; click the name or title itself.' };
+    if (kind === 'model') { var mp = linkPrefixOf(page, text); return { path: pathPatternOf(page, text), nameSel: selectorFor(el), linkPrefix: mp, key: keyModeOf(page, mp), sample: { page: page, name: text.slice(0, 80) } }; }
+    if (kind === 'video') { var vp = linkPrefixOf(page, ''); return { path: pathPatternOf(page, ''), titleSel: selectorFor(el), linkPrefix: vp, key: keyModeOf(page, vp), sample: { page: page, title: text.slice(0, 120) } }; }
+    var a = linkNear(el);
+    if (!a) return { error: 'No link next to that element; click the title of an entry that links to its own page.' };
+    var u = new URL(a.href, location.href);
+    if (u.host !== location.host) return { error: 'That link leads to another site (' + u.host + ').' };
+    var prefix = linkPrefixOf(u.pathname, kind === 'listing' ? text : ''), key = keyModeOf(u.pathname, prefix);
+    var card = structuralCard(a, selectorAttr(prefix), profileKey(setupHost(), prefix, key)) || a.parentElement;
+    var rel = card.contains(el) ? selectorFor(el, card) : '';
+    if (kind === 'card') return { linkPrefix: prefix, titleSel: rel, key: key, sample: { page: page, link: u.pathname, title: text.slice(0, 120) } };
+    return { path: '^' + escapeRe(page.replace(/\/+$/, '')) + '/?$', nameSel: rel, linkPrefix: prefix, key: key, sample: { page: page, link: u.pathname, name: text.slice(0, 80) } };
+  }
+  // How many entries of the picked kind this page links, by the derived prefix and key rule.
+  function pageContext(part) {
+    var prefix = part.linkPrefix || '', keyFn = profileKey(setupHost(), prefix, part.key || 'id'), keys = {};
+    var links = prefix ? document.querySelectorAll(selectorAttr(prefix)) : [];
+    for (var i = 0; i < links.length; i++) { var k = keyFn(links[i].getAttribute('href') || ''); if (k) keys[k] = 1; }
+    var ks = Object.keys(keys);
+    return { title: document.title.slice(0, 120), links: links.length, keys: ks.length, sampleKeys: ks.slice(0, 5) };
+  }
+  function pickSummary(kind, p) {
+    if (kind === 'model') return 'Name "' + p.sample.name + '" from ' + p.nameSel + '; performer pages: ' + p.path;
+    if (kind === 'video') return 'Title "' + p.sample.title + '" from ' + p.titleSel + '; video pages: ' + p.path;
+    if (kind === 'card') return 'Videos linked as ' + p.linkPrefix + '… (' + p.key + '), title from ' + (p.titleSel || 'the link') + ', e.g. "' + p.sample.title + '"';
+    return 'Models linked as ' + p.linkPrefix + '… (' + p.key + ') on ' + p.path + ', name from ' + (p.nameSel || 'the link');
+  }
+  function stopPick() { if (picking) { var off = picking; picking = null; off(); } }
+  function startPick(kind, label) {
+    stopPick();
+    var box = document.createElement('div');
+    box.setAttribute('data-setup', 'box');
+    box.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;border:2px solid #f59e0b;background:rgba(245,158,11,.15);border-radius:3px;display:none;';
+    document.documentElement.appendChild(box);
+    function onPage(t) { return t && t.nodeType === 1 && !t.closest('#userscript-dock, #' + SETUP_ID); }
+    function over(ev) { if (!onPage(ev.target)) { box.style.display = 'none'; return; } var r = ev.target.getBoundingClientRect(); box.style.cssText += 'display:block;left:' + r.left + 'px;top:' + r.top + 'px;width:' + r.width + 'px;height:' + r.height + 'px;'; }
+    // Capture on window runs before the site's own handlers (single-page routers listen at their root), so a pick never
+    // follows a link or opens a player.
+    function block(ev) { if (!onPage(ev.target)) return; ev.preventDefault(); ev.stopImmediatePropagation(); if (ev.type === 'click') { var t = ev.target; stopPick(); finishPick(kind, t); } }
+    function keys(ev) { if (ev.key === 'Escape') { ev.preventDefault(); stopPick(); renderSetup(setupState(), 'Pick cancelled.'); } }
+    var types = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick'];
+    window.addEventListener('mouseover', over, true);
+    types.forEach(function (t) { window.addEventListener(t, block, true); });
+    window.addEventListener('keydown', keys, true);
+    picking = function () { window.removeEventListener('mouseover', over, true); types.forEach(function (t) { window.removeEventListener(t, block, true); }); window.removeEventListener('keydown', keys, true); box.remove(); };
+    renderSetup(setupState(), 'Click the ' + label.toLowerCase() + ' on the page (it lights up under the mouse). Esc cancels.');
+  }
+  function finishPick(kind, el) {
+    var st = setupState();
+    if (!st.draft) return;
+    var part;
+    try { part = derivePick(kind, el); } catch (e) { part = { error: e.message }; }
+    if (part.error) { log('warn', 'site onboarding', 'pick failed: ' + part.error, { host: st.draft.host, kind: kind, element: describeElement(el) }); renderSetup(st, part.error); return; }
+    st.draft[kind] = part;
+    saveSetupState(st);
+    var ctx = pageContext(part);
+    log('info', 'site onboarding', kind + ' picked', { host: st.draft.host, kind: kind, part: part, element: describeElement(el), page: ctx });
+    var msg = kind === 'card' || kind === 'listing' ? 'This page links ' + ctx.keys + ' ' + (kind === 'card' ? 'videos' : 'models') + ' that way' + (ctx.sampleKeys.length ? ' (keys ' + ctx.sampleKeys.join(', ') + ').' : '.') : 'Saved in the draft.';
+    renderSetup(st, msg);
+  }
+  // What Stash already holds for this site: scene and performer counts per URL fragment and sample scene URLs with the key
+  // the profile reads from them (it must match the key of the site's own links).
+  function surveyStash(d) {
+    var keyOf = profileSite(Object.assign({}, d, { card: d.card || d.video || { linkPrefix: '/' } }), null).sceneKey;
+    return Promise.all(draftParts(d).map(function (part) {
+      return Promise.all([
+        gql('query($part:String!){ findScenes(scene_filter:{url:{value:$part, modifier:INCLUDES}}, filter:{per_page:5}){ count scenes{ urls } } }', { part: part }),
+        gql('query($part:String!){ findPerformers(performer_filter:{url:{value:$part, modifier:INCLUDES}}, filter:{per_page:1}){ count } }', { part: part })
+      ]).then(function (r) {
+        var fs = (r[0] && r[0].findScenes) || {}, urls = [];
+        (fs.scenes || []).forEach(function (s) { (s.urls || []).forEach(function (u) { if (u.indexOf(part) >= 0 && urls.length < 3) urls.push(u); }); });
+        return { part: part, scenes: fs.count || 0, performers: (r[1] && r[1].findPerformers && r[1].findPerformers.count) || 0, samples: urls.map(function (u) { return { url: canonUrl(u), key: keyOf(u) }; }) };
+      });
+    }));
+  }
+  function openSetup(fromMenu) {
+    var st = setupState();
+    if (!st.draft || validProfile(st.draft)) st.draft = JSON.parse(JSON.stringify(profiles[setupHost()] || { v: 1, host: setupHost() }));
+    st.open = true;
+    saveSetupState(st);
+    if (fromMenu) log('info', 'site onboarding', 'guide opened', { host: setupHost(), supported: !!site, builtIn: !!(site && !site.strictName) });
+    renderSetup(st, '');
+  }
+  function closeSetup() { stopPick(); var p = document.getElementById(SETUP_ID); if (p) p.remove(); var st = setupState(); st.open = false; saveSetupState(st); }
+  function saveProfile(st) {
+    var d = st.draft, err = validProfile(d);
+    if (!err && !d.model && !d.card && !d.video && !d.listing) err = 'pick at least one element first';
+    if (err) { renderSetup(st, 'Not saved: ' + err + '.'); return; }
+    d.v = 1;
+    d.updatedAt = new Date().toISOString();
+    var all = loadProfiles();
+    all[d.host] = d;
+    try { GM_setValue(PROFILES_KEY, all); } catch (e) {}
+    log('info', 'site profile saved', '', { host: d.host, profile: d, survey: st.survey || null });
+    sink.flush();
+    st.open = false;
+    saveSetupState(st);
+    location.reload();
+  }
+  function renderSetup(st, msg) {
+    var old = document.getElementById(SETUP_ID);
+    if (old) old.remove();
+    var d = st.draft, div = document.createElement('div');
+    div.id = SETUP_ID;
+    div.style.cssText = 'width:360px;max-width:calc(100vw - 24px);max-height:calc(100vh - 40px);overflow-y:auto;box-sizing:border-box;padding:10px 12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:10px;font:12px/1.5 system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.5);text-align:left;';
+    function el(tag, text, css) { var e = document.createElement(tag); if (text) e.textContent = text; if (css) e.style.cssText = css; return e; }
+    function button(text, name, fn, primary) { var b = el('button', text, 'margin:4px 4px 0 0;padding:3px 10px;border-radius:6px;border:1px solid #475569;background:' + (primary ? '#2563eb' : '#1e293b') + ';color:#fff;cursor:pointer;font:inherit;'); b.type = 'button'; b.setAttribute('data-setup', name); b.addEventListener('click', fn); return b; }
+    function section() { return el('div', '', 'margin-top:8px;padding-top:6px;border-top:1px solid #1e293b;'); }
+    div.appendChild(el('div', 'STASH SETUP · ' + d.host, 'font-weight:700;'));
+    var builtIn = site && !site.strictName;
+    div.appendChild(el('div', builtIn ? 'Built-in site: picks here only change the name, title and video page selectors.' : site ? 'Set up from your picks; pick again to change them.' : 'Not supported yet. Pick the elements below on this site\'s pages; every pick is logged for built-in support, and "Save and turn on" activates them here right away.', 'color:#94a3b8;'));
+    setupPicks().forEach(function (p) {
+      var part = d[p.kind], row = section();
+      row.appendChild(el('div', (part ? '✓ ' : '• ') + p.label + ' – ' + p.where, 'font-weight:600;color:' + (part ? '#86efac' : '#e2e8f0') + ';'));
+      row.appendChild(el('div', part ? pickSummary(p.kind, part) : p.hint, 'color:#94a3b8;word-break:break-all;'));
+      row.appendChild(button(part ? 'Pick again' : 'Pick', 'pick-' + p.kind, function () { startPick(p.kind, p.label); }, !part));
+      if (part) row.appendChild(button('Clear', 'clear-' + p.kind, function () { delete d[p.kind]; saveSetupState(st); renderSetup(st, ''); }));
+      div.appendChild(row);
+    });
+    var stash = section();
+    stash.appendChild(el('div', 'Stash URLs of this site contain', 'font-weight:600;'));
+    var parts = el('input', '', 'width:100%;box-sizing:border-box;margin-top:2px;padding:3px 6px;border-radius:5px;border:1px solid #475569;background:#020617;color:#e2e8f0;font:inherit;');
+    parts.setAttribute('data-setup', 'parts');
+    parts.value = draftParts(d).join(', ');
+    parts.title = 'Comma-separated URL fragments, e.g. example.com or example.com/video/';
+    parts.addEventListener('change', function () { var list = parts.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean); if (list.length) d.stash = { sceneParts: list }; else delete d.stash; saveSetupState(st); });
+    stash.appendChild(parts);
+    stash.appendChild(button('Check Stash', 'survey', function () {
+      renderSetup(st, 'Asking Stash ...');
+      surveyStash(d).then(function (res) { st.survey = res; saveSetupState(st); log('info', 'site onboarding', 'stash survey', { host: d.host, survey: res }); renderSetup(st, ''); }, function (e) { renderSetup(st, 'Cannot reach Stash at ' + STASH_ORIGIN + ': ' + e.message); });
+    }));
+    (st.survey || []).forEach(function (s) {
+      stash.appendChild(el('div', s.part + ': ' + s.scenes + ' scenes, ' + s.performers + ' performers in Stash', 'color:' + (s.scenes ? '#86efac' : '#fcd34d') + ';'));
+      s.samples.forEach(function (x) { stash.appendChild(el('div', x.url + ' → key ' + (x.key || 'none'), 'color:' + (x.key ? '#94a3b8' : '#fca5a5') + ';font-size:11px;word-break:break-all;')); });
+    });
+    var tagsRow = el('label', '', 'display:block;margin-top:4px;cursor:pointer;');
+    var tagsBox = el('input');
+    tagsBox.type = 'checkbox';
+    tagsBox.checked = typeof d.tags === 'boolean' ? d.tags : !!(site && site.cardTags);
+    tagsBox.setAttribute('data-setup', 'tags');
+    tagsBox.addEventListener('change', function () { d.tags = tagsBox.checked; saveSetupState(st); });
+    tagsRow.appendChild(tagsBox);
+    tagsRow.appendChild(document.createTextNode(' In-Stash tag on every video card (by URL, title or file name); cards Stash does not hold by URL cost a few lookups each'));
+    stash.appendChild(tagsRow);
+    div.appendChild(stash);
+    var actions = section();
+    actions.appendChild(button('Save and turn on', 'save', function () { saveProfile(st); }, true));
+    actions.appendChild(button('Send to log + copy', 'export', function () {
+      var text = JSON.stringify({ script: 'stash-exists-checker', version: VERSION, profile: d, survey: st.survey || null }, null, 2);
+      try { GM_setClipboard(text, 'text'); } catch (e) {}
+      log('info', 'site profile exported', '', { host: d.host, profile: d, survey: st.survey || null });
+      sink.flush();
+      st.json = text;
+      renderSetup(st, 'Copied, and sent to the log collector (event "site profile exported").');
+    }));
+    actions.appendChild(button('Import', 'import', function () { st.json = st.json || ''; st.importing = true; renderSetup(st, 'Paste a profile (or an export) and press Apply.'); }));
+    if (loadProfiles()[d.host]) {
+      actions.appendChild(button('Delete', 'delete', function () {
+        if (!confirm('Delete the Stash setup of ' + d.host + '?')) return;
+        var all = loadProfiles();
+        delete all[d.host];
+        try { GM_setValue(PROFILES_KEY, all); } catch (e) {}
+        log('info', 'site profile deleted', '', { host: d.host });
+        sink.flush();
+        st.open = false;
+        st.draft = null;
+        saveSetupState(st);
+        location.reload();
+      }));
+    }
+    actions.appendChild(button('Close', 'close', closeSetup));
+    if (st.json !== undefined && st.json !== null && (st.importing || st.json)) {
+      var ta = el('textarea', '', 'display:block;width:100%;height:140px;box-sizing:border-box;margin-top:6px;background:#020617;color:#e2e8f0;border:1px solid #475569;border-radius:5px;font:11px/1.4 ui-monospace,monospace;');
+      ta.setAttribute('data-setup', 'json');
+      ta.value = st.json;
+      actions.appendChild(ta);
+      if (st.importing) {
+        actions.appendChild(button('Apply', 'apply', function () {
+          var obj;
+          try { obj = JSON.parse(ta.value); } catch (e) { renderSetup(st, 'Not JSON: ' + e.message); return; }
+          if (obj && obj.profile) obj = obj.profile;
+          var err = validProfile(obj);
+          if (err) { st.json = ta.value; renderSetup(st, 'Not a profile: ' + err + '.'); return; }
+          st.draft = obj;
+          st.importing = false;
+          st.json = null;
+          saveSetupState(st);
+          renderSetup(st, 'Imported for ' + obj.host + '; press "Save and turn on" to keep it.');
+        }));
+      }
+    }
+    var line = el('div', msg || '', 'margin-top:6px;color:#fcd34d;');
+    line.setAttribute('data-setup', 'msg');
+    actions.appendChild(line);
+    div.appendChild(actions);
+    dockPanel(div, 36);
   }
 })();

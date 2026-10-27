@@ -15,8 +15,8 @@ The user requires every finished userscript version to be committed, and every c
 
 - The installable file is `stash-exists-checker.user.js`. There is no build step: the edited file is the installed file.
 - Cross-origin requests go through `GM_xmlhttpRequest` with a matching `@connect`; never reintroduce `siderRuntime` (the original Sider code-agent runtime this code was ported from).
-- Supported sites (Reptyle first) can be single-page apps: keep `@match` on whole sites, one per adapter host in `SITES`, and make every page-specific action idempotent.
-- Put page-specific selectors and URL rules in the site's `SITES` adapter, never in the core.
+- The script matches every site (`@match *://*/*`) so the setup guide is in the Tampermonkey menu everywhere. On a site that is neither built in nor set up it must stay inert: no Stash request, no log entry, no observer, nothing drawn until the user opens the guide (the browser test asserts this). Supported sites can be single-page apps: make every page-specific action idempotent.
+- Put page-specific selectors and URL rules in the site's `SITES` adapter or its profile, never in the core. The setup guide logs everything needed for a built-in adapter (event `site onboarding`/`site profile exported`); read it with the `userscript-logs` skill before writing one.
 - Build UI with DOM APIs, not HTML strings.
 - Keep the pure helpers behind the `module.exports` guard near the top so `test/core.test.cjs` can import them without a DOM.
 - Never commit session tokens, `?r=` referral parameters, cookies, signed CDN URLs or account names of any site.

@@ -15,14 +15,24 @@ const gmStore = {};
 const stub = () => `
 window.__gm = ${JSON.stringify(gmStore)};
 window.__log = [];
+window.__errors = [];
+window.addEventListener("error", e => __errors.push(String(e.message)));
+window.addEventListener("unhandledrejection", e => __errors.push(String(e.reason && e.reason.stack || e.reason)));
 window.__confirm = true;
 window.confirm = function (m) { __log.push('confirm'); return __confirm; };
 window.alert = function (m) { __log.push('alert:' + m); };
 window.GM_getValue = function (k, d) { return k in __gm ? JSON.parse(JSON.stringify(__gm[k])) : d; };
 window.GM_setValue = function (k, v) { __gm[k] = JSON.parse(JSON.stringify(v)); __gmSet(JSON.stringify([k, v])); };
 window.GM_addStyle = function (css) { const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st); return st; };
-// Scenes the single-video lookups (video page badge, card dots) can find; the title "Offline" stands for a Stash that does not answer.
-const SCENES = [{ id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }, { id: '51', title: 'Hit By Title', urls: [] }];
+window.__menu = {};
+window.GM_registerMenuCommand = function (name, fn) { __menu[name] = fn; return name; };
+window.GM_setClipboard = function (text) { window.__clip = text; };
+// Scenes the single-video lookups (video page badge, card tags) can find; the title "Offline" stands for a Stash that does not answer.
+const SCENES = [
+  { id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }, { id: '51', title: 'Hit By Title', urls: [] },
+  { id: '52', title: 'Different Stash Title', urls: [], files: [{ basename: 'Unknown Card Video Title (2024).mp4' }] },
+  { id: '90', title: 'NS Title', urls: ['https://tour.newsite.example/video/80001/ns-title'] }
+];
 const PERFS = [
   { id: '7', name: 'Jane Doe', alias_list: [], urls: [] },
   { id: '8', name: 'Real Name', alias_list: ['Alias Girl'], urls: ['https://app.reptyle.com/models/2'] },
@@ -38,12 +48,17 @@ window.GM_xmlhttpRequest = function (o) {
   const body = JSON.parse(o.data), q = body.query, v = body.variables || {};
   let data;
   if (/scene_filter:\\$sf/.test(q) && (v.sf.title?.value === 'Offline' || /\\/movies\\/666/.test(v.sf.url?.value || ''))) { __log.push('lookup:offline'); setTimeout(() => o.onerror(), 10); return; }
-  if (/performerUpdate/.test(q)) { __log.push('update:' + JSON.stringify(v.input)); data = { performerUpdate: { id: v.input.id, urls: v.input.urls } }; }
+  // Setup guide survey: what Stash holds per URL fragment.
+  if (/\\$part/.test(q) && /findScenes/.test(q)) { __log.push('survey:scenes:' + v.part); const ss = SCENES.filter(s => s.urls.some(u => u.includes(v.part))); data = { findScenes: { count: ss.length, scenes: ss } }; }
+  else if (/\\$part/.test(q)) { __log.push('survey:performers:' + v.part); data = { findPerformers: { count: PERFS.filter(p => p.urls.some(u => u.includes(v.part))).length } }; }
+  // File-name lookup: a quoted INCLUDES is one LIKE '%...%' in Stash, % between the words.
+  else if (/scene_filter:\\$sf/.test(q) && v.sf.path) { __log.push('lookup:p:' + v.sf.path.value); const re = new RegExp(v.sf.path.value.replace(/"/g, '').split('%').join('.*'), 'i'); const ss = SCENES.filter(s => (s.files || []).some(f => re.test(f.basename))); data = { findScenes: { count: ss.length, scenes: ss } }; }
+  else if (/performerUpdate/.test(q)) { __log.push('update:' + JSON.stringify(v.input)); data = { performerUpdate: { id: v.input.id, urls: v.input.urls } }; }
   else if (/findPerformer\\(id:/.test(q)) { __log.push('live:' + v.id); const p = PERFS.find(x => x.id === v.id); data = { findPerformer: p ? { urls: (LIVE_URLS[p.id] || []).concat(p.urls) } : null }; }
   else if (/performer_filter:\\{url/.test(q)) { __log.push('byurl:' + v.u); const ps = PERFS.filter(p => p.urls.some(u => u.includes(v.u))); data = { findPerformers: { performers: JSON.parse(JSON.stringify(ps)) } }; }
   else if (/findPerformers\\(filter:\\{q:/.test(q)) { const n = v.q.toLowerCase(); const ps = PERFS.filter(p => [p.name].concat(p.alias_list).some(x => x.toLowerCase().includes(n))); data = { findPerformers: { count: ps.length, performers: JSON.parse(JSON.stringify(ps)) } }; }
   else if (/findPerformers/.test(q)) { __log.push('perfs:' + v.p); data = { findPerformers: { count: PERFS.length, performers: JSON.parse(JSON.stringify(PERFS)) } }; }
-  else if (/url:\\{value:\\$h/.test(q)) { __log.push('scenes:' + v.h + ':' + v.p); data = { findScenes: { scenes: v.h === 'brazzers.com/video/' ? [{ id: '70', title: 'BZ Cross', urls: ['https://www.brazzers.com/video/9001/bz-cross'] }] : /brazzers/.test(v.h) ? [] : v.h === '/en/video/' ? [{ id: '60', title: 'Cross Site', urls: ['https://www.evilangel.com/en/video/evilangel/Cross-Site/209586'] }] : [{ id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }] } }; }
+  else if (/url:\\{value:\\$h/.test(q)) { __log.push('scenes:' + v.h + ':' + v.p); data = { findScenes: { scenes: v.h === 'newsite.example' ? SCENES.filter(s => s.urls.some(u => u.includes(v.h))) : v.h === 'brazzers.com/video/' ? [{ id: '70', title: 'BZ Cross', urls: ['https://www.brazzers.com/video/9001/bz-cross'] }] : /brazzers/.test(v.h) ? [] : v.h === '/en/video/' ? [{ id: '60', title: 'Cross Site', urls: ['https://www.evilangel.com/en/video/evilangel/Cross-Site/209586'] }] : [{ id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }] } }; }
   else if (/performers:\\{value:\\[217\\]/.test(q)) data = { findScenes: { count: 1, scenes: [{ id: '61', title: 'Title Match AT', urls: [] }] } };
   else if (/performers:\\{value/.test(q)) data = { findScenes: { count: 1, scenes: [{ id: '51', title: 'Hit By Title', urls: [] }] } };
   else if (/scene_filter:\\$sf/.test(q) && v.sf.title) { __log.push('lookup:t:' + v.sf.title.value); const ss = SCENES.filter(s => s.title.toLowerCase() === v.sf.title.value.toLowerCase()); data = { findScenes: { count: ss.length, scenes: ss } }; }
@@ -70,13 +85,23 @@ function bzPage(p, search) {
   else body = `<h1>Scenes</h1>${bzGrid(2717, 'kenzie-reeves')}`;
   return `<!doctype html><html><head><title>Brazzers</title></head><body><div id="root">${body}</div><script>${stub()}</script><script>${source}</script></body></html>`;
 }
+// A site the script does not know: two h1s (logo and performer name), cards whose title sits beside the links, and a
+// click handler that must never see a pick.
+const NS = 'members.newsite.example';
+const nsCard = (id, t) => `<div class="tile"><a class="thumb" href="/watch/${id}/${t.toLowerCase().replace(/ /g, '-')}"><img></a><h3 class="tile-title">${t}</h3><a class="star" href="/performer/555/jane-doe">Jane Doe</a></div>`;
+function nsPage(p) {
+  const grid = `<div class="grid">${nsCard(80001, 'NS Title')}${nsCard(80002, 'Hit By Title')}${nsCard(80003, 'Nothing Here At All')}</div>`;
+  const body = p.startsWith('/watch/') ? `<h1 class="vid-title">NS Title</h1>${grid}` : `<div class="profile"><h1 class="ProfileName" onclick="window.__pageClicked = true">Jane Doe</h1></div>${grid}`;
+  return `<!doctype html><html><head><title>NewSite</title></head><body><header><h1 class="SiteLogo">NewSite</h1></header>${body}<script>${stub()}</script><script>${source}</script></body></html>`;
+}
 function page(p, host, search) {
   if (host === 'site-ma.brazzers.com') return bzPage(p, search);
   if (host === 'members.adulttime.com') return atPage(p);
+  if (host === NS) return nsPage(p);
   let body;
   if (p === '/models') body = `<h1>Models</h1>${model(1, 'Jane Doe')}${model(2, 'Alias Girl')}${model(3, 'Nobody Here')}`;
   else if (p === '/models/2') body = `<div class="model-name-container"><h2>Alias Girl</h2></div>`;
-  else if (p.startsWith('/movies/')) body = `<h1>Hit By Url</h1><h2>Related</h2>${card(100, 'Some Other Title')}${card(101, 'Hit By Title')}${card(102, 'Unknown')}`;
+  else if (p.startsWith('/movies/')) body = `<h1>Hit By Url</h1><h2>Related</h2>${card(100, 'Some Other Title')}${card(101, 'Hit By Title')}${card(102, 'Unknown')}${card(103, 'Unknown Card Video Title')}`;
   else body = `<div class="model-name-container"><h2>Jane Doe</h2></div><h2>Featured in</h2>${card(100, 'Some Other Title')}${card(101, 'Hit By Title')}${card(102, 'Unknown')}`;
   return `<!doctype html><html><head><title>Reptyle | Test</title></head><body>${body}<script>${stub()}</script><script>${source}</script></body></html>`;
 }
@@ -98,7 +123,7 @@ async function connect(url) {
     pg = await connect(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
     pg.on('Fetch.requestPaused', async ev => {
       const u = new URL(ev.request.url);
-      if (!['app.reptyle.com', 'members.adulttime.com', 'site-ma.brazzers.com'].includes(u.hostname) || /\.(png|ico)$/.test(u.pathname)) return pg.send('Fetch.failRequest', { requestId: ev.requestId, errorReason: 'BlockedByClient' });
+      if (!['app.reptyle.com', 'members.adulttime.com', 'site-ma.brazzers.com', NS].includes(u.hostname) || /\.(png|ico)$/.test(u.pathname)) return pg.send('Fetch.failRequest', { requestId: ev.requestId, errorReason: 'BlockedByClient' });
       pg.send('Fetch.fulfillRequest', { requestId: ev.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'text/html; charset=utf-8' }], body: Buffer.from(page(u.pathname, u.hostname, u.search)).toString('base64') });
     });
     await pg.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
@@ -107,7 +132,7 @@ async function connect(url) {
     await pg.send('Runtime.addBinding', { name: '__gmSet' });
     await pg.send('Page.enable');
     const ev = async expr => { const r = await pg.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); if (r.exceptionDetails) throw Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text); return r.result.value; };
-    const wait = async expr => { for (let n = 0; n < 200; n++) { if (await ev(expr)) return; await pause(30); } throw Error('timeout: ' + expr + ' :: ' + await ev('document.body.innerText')); };
+    const wait = async expr => { for (let n = 0; n < 200; n++) { if (await ev(expr)) return; await pause(30); } throw Error('timeout: ' + expr + ' :: ' + await ev('document.body.innerText') + '\npanel: ' + await ev('document.getElementById("stash-model-link-panel")?.outerHTML || "none"') + '\nlog: ' + await ev('JSON.stringify(__log.slice(-12))') + '\ncount: ' + await ev('document.querySelector("[data-sml-video-count]")?.outerHTML || "none"') + '\nerrors: ' + await ev('JSON.stringify(window.__errors || [])')); };
     const go = async (p, host = 'app.reptyle.com') => { await pg.send('Page.navigate', { url: 'https://' + host + p }); await wait('document.readyState==="complete" && !!window.__log'); };
     // GM writes reach gmStore through binding events, which can trail the page; wait for them before the next page,
     // or that page gets a snapshot without them (the real storage has no such gap).
@@ -128,15 +153,16 @@ async function connect(url) {
     assert.ok(await ev('__log.includes("perfs:1")'));
     assert.equal(gmStore['cache:v1:performers'].items.length, 5);
     assert.equal(gmStore['cache:v1:scenes:app.reptyle.com'].items[0].id, '50');
-    // Card dots: an id in the stored scene list answers at once, the other cards are looked up by title and URL.
-    const dots = '[...document.querySelectorAll(".stash-card-dot")].map(d=>d.textContent)';
-    await wait(dots + '.length===3 && !' + dots + '.includes("?")');
-    assert.deepEqual(await ev(dots), ['#50', '#51', 'x']);
+    // Card tags: an id in the stored scene list answers at once, the other cards are looked up (title, URL, file name).
+    // One corner, one tag: where the IN STASH badge is, no tag; never inside the title.
+    const tags = '[...document.querySelectorAll(".movies-thumb-entry")].map(c=>(c.querySelector(".stash-model-link-video-badge") ? "badge" : "") + (c.querySelector(".stash-exists-tag")?.textContent || ""))';
+    await wait(tags + '.join("|")==="badge|badge|NOT IN STASH"');
+    await pause(500);
+    assert.deepEqual(await ev(tags), ['badge', 'badge', 'NOT IN STASH']);
+    assert.equal(await ev('[...document.querySelectorAll(".stash-exists-tag")].every(t=>t.parentElement.classList.contains("movies-thumb-entry"))'), true);
     assert.equal(await ev('__log.some(x=>x.startsWith("lookup:") && x.includes("/movies/100"))'), false);
     assert.ok(await ev('__log.includes("lookup:t:Hit By Title")'));
-    assert.ok(await ev('__log.includes("fuzzy:Unknown")'));
-    // The dot (top right) and the IN STASH badge (top left) of one card do not overlap.
-    assert.equal(await ev('(() => { const c = document.querySelector(".movies-thumb-entry"), a = c.querySelector(".stash-model-link-video-badge").getBoundingClientRect(), b = c.querySelector(".stash-card-dot").getBoundingClientRect(); return a.right <= b.left || b.right <= a.left; })()'), true, 'dot and badge overlap');
+    assert.equal(await ev('__log.some(x=>x.startsWith("fuzzy:") || x.startsWith("lookup:p:"))'), false, 'cards get no fuzzy search; "Unknown" is too short for a file lookup');
     // Add URL: cancel writes nothing, confirm writes the page URL.
     await ev('__confirm=false; [...document.querySelectorAll("#stash-model-link-panel button")].find(b=>b.textContent.startsWith("Add this URL")).click()');
     await pause(100);
@@ -157,13 +183,19 @@ async function connect(url) {
     // Next page: scenes come from storage, the dropped performer list is fetched again.
     assert.equal(await ev('__log.some(x=>x.startsWith("scenes:"))'), false);
     await wait('__log.includes("perfs:1")');
-    // Video page badge after the title: exact title and canonical URL both match.
+    // Video page badge after the title: the page's id is in the stored scene list, so no lookup is needed.
     const badge = '(document.getElementById("stash-exists-badge")?.textContent || "")';
-    await wait(badge + '==="In Stash #50 (url+title)"');
-    assert.ok(await ev('__log.includes("lookup:u:https://app.reptyle.com/movies/100")'));
+    await wait(badge + '==="In Stash #50 (url)"');
+    assert.equal(await ev('__log.some(x=>x.startsWith("lookup:") && x.includes("/movies/100"))'), false);
     assert.equal(await ev('document.getElementById("stash-exists-badge").href'), 'http://localhost:9999/scenes/50');
     assert.equal(await ev('document.getElementById("stash-exists-badge").previousElementSibling.tagName'), 'H1');
-    await wait('(window.__sent || []).some(e => e.event === "detail checked" && e.data.sceneId === "50" && e.data.via === "url+title")');
+    await wait('(window.__sent || []).some(e => e.event === "detail checked" && e.data.sceneId === "50" && e.data.via === "url")');
+    // Without a performer page there is no title map: the card tags tell title and file-name matches apart.
+    const via = '[...document.querySelectorAll(".movies-thumb-entry")].map(c=>c.querySelector(".stash-model-link-video-badge") ? "badge" : c.querySelector(".stash-exists-tag")?.getAttribute("data-stash-via") || "")';
+    await wait(via + '.join("|")==="badge|title|none|file"');
+    assert.equal(await ev('document.querySelector("[data-stash-via=file]").textContent'), '\u2713 IN STASH \u00b7 FILE');
+    assert.equal(await ev('document.querySelector("[data-stash-via=file]").href'), 'http://localhost:9999/scenes/52');
+    assert.ok(await ev('__log.includes("lookup:p:\\"unknown%card%video%title\\"")'));
     // In-app navigation to a video Stash does not answer for: "Stash unreachable", never "Not in Stash".
     await ev('history.pushState({}, "", "/movies/666"); document.querySelector("h1").textContent = "Offline"');
     await wait(badge + '==="Stash unreachable"');
@@ -208,8 +240,8 @@ async function connect(url) {
     await wait('(window.__sent || []).some(e => e.event === "performer lookup")');
     assert.ok(await ev('__sent.every(e => e.script === "stash-exists-checker" && e.version && e.session && !/[?#]/.test(e.page))'));
     assert.ok(await ev('__sent.some(e => e.event === "started" && e.data.site === "adulttime")'));
-    // Video badge and card dots are Reptyle-only: no other adapter knows its video page DOM.
-    assert.equal(await ev('!!document.querySelector(".stash-card-dot, #stash-exists-badge")'), false);
+    // The video page badge is Reptyle-only until a site's video page is picked in the setup guide.
+    assert.equal(await ev('!!document.getElementById("stash-exists-badge")'), false);
     assert.equal(await ev('!!document.getElementById("stash-model-link-heading-badge")'), false);
     assert.deepEqual(await ev('__log.filter(x=>x.startsWith("scenes:/en"))'), ['scenes:/en/video/:1']);
     await wait(panel + '.includes("Videos on this page in Stash: 2/3")');
@@ -218,6 +250,13 @@ async function connect(url) {
     assert.deepEqual(await ev('[...document.querySelectorAll(".stash-model-link-video-badge")].map(b=>b.href.split("/").pop()).sort()'), ['60', '61']);
     assert.deepEqual(await ev('[...document.querySelectorAll("[data-sml-video-green]")].map(e=>e.tagName+":"+e.textContent.replace(/^\\u2713 /,""))').then(x => x.sort()), ['H2:Other Name Here', 'H2:Title Match AT']);
     assert.equal(await ev('[...document.querySelectorAll(".SceneThumb-WithMenu-ChannelName-Link")].some(a=>a.hasAttribute("data-sml-video-green"))'), false);
+    // Card tags on Adult Time: the card Stash holds by neither id nor title gets one tag, on the grid item (the card
+    // selector also matches the image link, which must not get it), after a title and a file-name lookup.
+    const atCards = '[...document.querySelectorAll(".ListingGrid-ListingGridItem")].map(c=>c.querySelector(".stash-model-link-video-badge") ? "badge" : c.querySelector(".stash-exists-tag")?.getAttribute("data-stash-via") || "")';
+    await wait(atCards + '.join("|")==="badge|badge|none"');
+    assert.equal(await ev('document.querySelector(".stash-exists-tag").parentElement.classList.contains("ListingGrid-ListingGridItem")'), true);
+    assert.ok(await ev('__log.includes("lookup:t:Not In Stash") && __log.includes("lookup:p:\\"not%in%stash\\"")'));
+    assert.equal(await ev('__log.some(x=>x.startsWith("lookup:u:"))'), false, 'no URL query once the scene list is loaded');
     await ev('__confirm=true; [...document.querySelectorAll("#stash-model-link-panel button")].find(b=>b.textContent.startsWith("Add this URL")).click()');
     await wait('__log.some(x=>x.includes("\\"id\\":\\"217\\""))');
     assert.ok(await ev('__log.some(x=>x==="update:"+JSON.stringify({id:"217",urls:["https://site-ma.brazzers.com/model/2717/kenzie-reeves","https://members.adulttime.com/en/pornstar/view/Kenzie-Reeves/49648"]}))'));
@@ -309,10 +348,15 @@ async function connect(url) {
     assert.equal(await ev('document.querySelector(".stash-model-link-video-badge").getAttribute("data-sml-key")'), '70');
     await wait('document.querySelectorAll("a[data-sml-model]").length===3');
     assert.equal(await ev('[...document.querySelectorAll("a[data-sml-model]")].every(a=>a.getAttribute("data-sml-model")==="217" && a.textContent.startsWith("\\u2713 "))'), true);
-    // A reused card that now shows another scene loses its badge.
+    // Card tags on Brazzers (title from the scene link): the cards Stash holds by neither id, title nor file name.
+    const bzCards = '[...document.querySelectorAll(".e1vusg2z1")].map(c=>c.querySelector(".stash-model-link-video-badge") ? "badge" : c.querySelector(".stash-exists-tag")?.getAttribute("data-stash-via") || "")';
+    await wait(bzCards + '.join("|")==="badge|none|none"');
+    // A reused card that now shows another scene loses its badge, and its tag follows the new scene.
     await ev('document.querySelectorAll("a[href^=\\"/scene/9001/\\"]").forEach(a=>a.setAttribute("href","/scene/9999/other"))');
     await wait('document.querySelectorAll(".stash-model-link-video-badge").length===0');
     assert.equal(await ev('document.querySelectorAll("[data-sml-video-green]").length'), 0);
+    await wait(bzCards + '.join("|")==="none|none|none"');
+    assert.equal(await ev('document.querySelector(".e1vusg2z1").dataset.stashQueued'), '9999');
 
     // Model listing: names from the URL, structural cards, + URL only where the URL is missing.
     await stored('cache:v1:performers', v => !!v); // stored again by the plain listing after the last write
@@ -325,6 +369,74 @@ async function connect(url) {
     assert.equal(await ev('document.querySelectorAll(".stash-model-link-model-add").length'), 1);
     assert.equal(await ev('document.querySelector(".stash-model-link-model-add").parentElement.innerText.includes("Nia Nacci")'), true);
     assert.equal(await ev('[...document.querySelectorAll(".stash-model-link-model-badge")].every(b=>b.parentElement.classList.contains("css-c"))'), true);
+
+    // Unknown site: the script runs but stays inert (no Stash request, no log entry, nothing drawn) and only offers the
+    // setup guide in the Tampermonkey menu.
+    await go('/performer/555/jane-doe', NS);
+    await pause(2500);
+    assert.deepEqual(await ev('Object.keys(__menu)'), ['Stash: set up this site']);
+    assert.deepEqual(await ev('__log'), []);
+    assert.deepEqual(await ev('window.__sent || []'), []);
+    assert.equal(await ev('!!document.querySelector("#stash-model-link-panel, .stash-model-link-video-badge, #userscript-dock")'), false);
+    // The guide: pick the performer name. The pick is captured before the page sees the click.
+    const setup = 'document.getElementById("stash-exists-setup")';
+    const pick = (kind, target) => ev(`(() => { ${setup}.querySelector("[data-setup=pick-${kind}]").click(); const e = document.querySelector(${JSON.stringify(target)}); for (const t of ["mouseover", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]) e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })); })()`);
+    const draft = () => (gmStore['setup:v1:' + NS] || {}).draft || {};
+    await ev('__menu["Stash: set up this site"]()');
+    await wait('!!' + setup);
+    assert.equal(await ev(setup + '.parentElement.id'), 'userscript-dock');
+    await pick('model', 'h1.ProfileName');
+    await stored('setup:v1:' + NS, v => v && v.draft && v.draft.model);
+    assert.deepEqual(draft().model, { path: '^/performer/\\d+/[^/]+(?:/|$)', nameSel: 'h1.ProfileName', linkPrefix: '/performer/', key: 'id', sample: { page: '/performer/555/jane-doe', name: 'Jane Doe' } });
+    assert.equal(await ev('!!window.__pageClicked'), false, 'the page saw the pick click');
+    // A video title beside the links: the card is found by structure, the title selector is relative to it.
+    await pick('card', '.tile:nth-child(2) h3.tile-title');
+    await stored('setup:v1:' + NS, v => v && v.draft && v.draft.card);
+    assert.deepEqual(draft().card, { linkPrefix: '/watch/', titleSel: 'h3.tile-title', key: 'id', sample: { page: '/performer/555/jane-doe', link: '/watch/80002/hit-by-title', title: 'Hit By Title' } });
+    await wait(setup + '.innerText.includes("This page links 3 videos that way (keys 80001, 80002, 80003)")');
+    // Every pick is logged with its page context, URLs without query strings, so support can be built from the log.
+    await wait('(window.__sent || []).some(e => e.event === "site onboarding" && e.msg === "card picked")');
+    const logged = await ev('__sent.find(e => e.msg === "card picked").data');
+    assert.equal(logged.host, NS);
+    assert.match(logged.element.html, /tile-title/);
+    assert.deepEqual(logged.page.sampleKeys, ['80001', '80002', '80003']);
+    assert.ok(logged.element.chain.length >= 2);
+    // The guide survives navigation: on a video page, pick its title.
+    await go('/watch/80001/ns-title', NS);
+    await wait('!!' + setup);
+    await pick('video', 'h1.vid-title');
+    await stored('setup:v1:' + NS, v => v && v.draft && v.draft.video);
+    assert.equal(draft().video.path, '^/watch/\\d+/[^/]+(?:/|$)');
+    assert.equal(draft().video.titleSel, 'h1.vid-title');
+    // Card tags on, what Stash holds for the site, export to clipboard and log.
+    await ev(setup + '.querySelector("[data-setup=tags]").click()');
+    await stored('setup:v1:' + NS, v => v && v.draft && v.draft.tags === true);
+    await ev(setup + '.querySelector("[data-setup=survey]").click()');
+    await wait(setup + '.innerText.includes("newsite.example: 1 scenes, 0 performers in Stash")');
+    assert.ok(await ev(setup + '.innerText.includes("https://tour.newsite.example/video/80001/ns-title \\u2192 key 80001")'));
+    await ev(setup + '.querySelector("[data-setup=export]").click()');
+    assert.equal(JSON.parse(await ev('__clip')).profile.host, NS);
+    await wait('(window.__sent || []).some(e => e.event === "site profile exported" && e.data.profile.card.linkPrefix === "/watch/")');
+    // Esc cancels a pick without changing the draft.
+    await ev(setup + '.querySelector("[data-setup=pick-listing]").click(); window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))');
+    assert.ok(await ev(setup + '.innerText.includes("Pick cancelled.")'));
+    assert.equal(await ev('!!document.querySelector("[data-setup=box]")'), false);
+    // Save and turn on: the profile is stored and the site works like a built-in one.
+    await ev(setup + '.querySelector("[data-setup=save]").click()');
+    await stored('profiles:v1', v => v && v[NS] && v[NS].video);
+    await stored('setup:v1:' + NS, v => v && v.open === false);
+    await pause(500);
+    await go('/performer/555/jane-doe', NS);
+    await wait(panel + '.includes("Videos on this page in Stash: 2/3")');
+    assert.match(await ev(panel), /Found in Stash: Jane Doe \(id 7\)/);
+    assert.equal(await ev('!!' + setup), false, 'the guide stays closed after saving');
+    assert.deepEqual(await ev('Object.keys(__menu)'), ['Stash: edit the setup of this site']);
+    assert.equal(await ev('!!document.getElementById("stash-model-link-heading-badge")'), true);
+    assert.equal(await ev('document.getElementById("stash-model-link-heading-badge").parentElement.className'), 'ProfileName');
+    const nsCards = '[...document.querySelectorAll(".tile")].map(c=>c.querySelector(".stash-model-link-video-badge") ? "badge" : c.querySelector(".stash-exists-tag")?.getAttribute("data-stash-via") || "")';
+    await wait(nsCards + '.join("|")==="badge|badge|none"');
+    await go('/watch/80001/ns-title', NS);
+    await wait(badge + '==="In Stash #90 (url)"');
     console.log('browser test OK');
   } catch (e) { console.error('browser test FAILED:', e.message); process.exitCode = 1; }
   finally { pg?.close(); chrome.kill(); await pause(300); try { fs.rmSync(profile, { recursive: true, force: true }); } catch {} }

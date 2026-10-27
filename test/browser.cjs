@@ -402,13 +402,43 @@ async function connect(url) {
     assert.equal(await ev(setup + '.parentElement.id'), 'userscript-dock');
     await pick('model', 'h1.ProfileName');
     await stored('setup:v1:' + NS, v => v && v.draft && v.draft.model);
-    assert.deepEqual(draft().model, { path: '^/performer/\\d+/[^/]+(?:/|$)', nameSel: 'h1.ProfileName', linkPrefix: '/performer/', key: 'id', sample: { page: '/performer/555/jane-doe', name: 'Jane Doe' } });
+    assert.deepEqual(draft().model, [{ path: '^/performer/\\d+/[^/]+(?:/|$)', nameSel: 'h1.ProfileName', linkPrefix: '/performer/', key: 'id', sample: { page: '/performer/555/jane-doe', name: 'Jane Doe' } }]);
     assert.equal(await ev('!!window.__pageClicked'), false, 'the page saw the pick click');
-    // A video title beside the links: the card is found by structure, the title selector is relative to it.
-    await pick('card', '.tile:nth-child(2) h3.tile-title');
+    // A transparent link stretched over a card and a click-through title, as on many members sites: the picker offers
+    // the title under the pointer anyway, the arrow keys move to its parent and back, and the click picks the title.
+    await ev('(() => { const c = document.querySelectorAll(".tile")[1]; c.style.position = "relative"; const o = document.createElement("a"); o.href = "/watch/80002/hit-by-title"; o.className = "cover"; o.style.cssText = "position:absolute;inset:0;z-index:3"; c.append(o); c.querySelector("h3").style.pointerEvents = "none"; })()');
+    await ev(setup + '.querySelector("[data-setup=pick-card]").click()');
+    const tip = '(document.querySelector("[data-setup=tip]")?.textContent || "")';
+    await ev('(() => { const r = document.querySelectorAll(".tile")[1].querySelector("h3").getBoundingClientRect(); window.dispatchEvent(new MouseEvent("mousemove", { clientX: r.left + 5, clientY: r.top + r.height / 2 })); })()');
+    assert.match(await ev(tip), /^h3\.tile-title — Hit By Title/);
+    await ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }))');
+    assert.match(await ev(tip), /^div\.tile — /);
+    await ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }))');
+    assert.match(await ev(tip), /^h3\.tile-title/);
+    await ev('document.querySelector("a.cover").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))');
     await stored('setup:v1:' + NS, v => v && v.draft && v.draft.card);
-    assert.deepEqual(draft().card, { linkPrefix: '/watch/', titleSel: 'h3.tile-title', key: 'id', sample: { page: '/performer/555/jane-doe', link: '/watch/80002/hit-by-title', title: 'Hit By Title' } });
+    assert.equal(await ev('location.pathname'), '/performer/555/jane-doe', 'the pick click followed the link');
+    assert.equal(await ev('!!document.querySelector("[data-setup=box], [data-setup=tip], [data-setup=style]")'), false, 'picker leftovers');
+    // The card is found by structure, and its own class is kept because the other cards share it.
+    assert.deepEqual(draft().card, [{ linkPrefix: '/watch/', titleSel: 'h3.tile-title', cardSel: 'div.tile', key: 'id', sample: { page: '/performer/555/jane-doe', link: '/watch/80002/hit-by-title', title: 'Hit By Title' } }]);
     await wait(setup + '.innerText.includes("This page links 3 videos that way (keys 80001, 80002, 80003)")');
+    // Another example with the same rule is not added twice.
+    await pick('card', '.tile:nth-child(3) h3.tile-title');
+    await wait(setup + '.innerText.includes("Same rule as an earlier example.")');
+    assert.equal(draft().card.length, 1);
+    // Class choice on markup from the onboarding logs: BEM names (main__videoTitle) stay, CSS-module hashes
+    // (styles_MUaQmnAOb3, Title_title__3xYz1) and state classes (Link--hover) go.
+    await ev('(() => { const h = document.createElement("h2"); h.className = "main__videoTitle styles_MUaQmnAOb3 Title_title__3xYz1 Link--hover"; h.textContent = "Class Test"; h.setAttribute("data-class-test", "1"); document.querySelector(".profile").append(h); })()');
+    await ev(setup + '.querySelector("[data-setup=pick-listing]").click()');
+    await ev('(() => { const r = document.querySelector("[data-class-test]").getBoundingClientRect(); window.dispatchEvent(new MouseEvent("mousemove", { clientX: r.left + 3, clientY: r.top + r.height / 2 })); })()');
+    assert.match(await ev(tip), /^h2\.main__videoTitle — Class Test/);
+    await ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); document.querySelector("[data-class-test]").remove()');
+    // A "model list" pick on a name inside a video card becomes a performer link: a page of videos is no model list.
+    await pick('listing', '.tile:nth-child(1) a.star');
+    await stored('setup:v1:' + NS, v => v && v.draft && v.draft.performerLink);
+    assert.deepEqual(draft().performerLink, [{ linkPrefix: '/performer/', key: 'id', sample: { page: '/performer/555/jane-doe', link: '/performer/555/jane-doe', name: 'Jane Doe' } }]);
+    assert.equal(draft().listing, undefined);
+    assert.ok(await ev(setup + '.innerText.includes("saved as a performer link")'));
     // Every pick is logged with its page context, URLs without query strings, so support can be built from the log.
     await wait('(window.__sent || []).some(e => e.event === "site onboarding" && e.msg === "card picked")');
     const logged = await ev('__sent.find(e => e.msg === "card picked").data');
@@ -421,8 +451,8 @@ async function connect(url) {
     await wait('!!' + setup);
     await pick('video', 'h1.vid-title');
     await stored('setup:v1:' + NS, v => v && v.draft && v.draft.video);
-    assert.equal(draft().video.path, '^/watch/\\d+/[^/]+(?:/|$)');
-    assert.equal(draft().video.titleSel, 'h1.vid-title');
+    assert.equal(draft().video[0].path, '^/watch/\\d+/[^/]+(?:/|$)');
+    assert.equal(draft().video[0].titleSel, 'h1.vid-title');
     // Card tags on, what Stash holds for the site, export to clipboard and log.
     await ev(setup + '.querySelector("[data-setup=tags]").click()');
     await stored('setup:v1:' + NS, v => v && v.draft && v.draft.tags === true);
@@ -431,7 +461,7 @@ async function connect(url) {
     assert.ok(await ev(setup + '.innerText.includes("https://tour.newsite.example/video/80001/ns-title \\u2192 key 80001")'));
     await ev(setup + '.querySelector("[data-setup=export]").click()');
     assert.equal(JSON.parse(await ev('__clip')).profile.host, NS);
-    await wait('(window.__sent || []).some(e => e.event === "site profile exported" && e.data.profile.card.linkPrefix === "/watch/")');
+    await wait('(window.__sent || []).some(e => e.event === "site profile exported" && e.data.profile.card[0].linkPrefix === "/watch/")');
     // Esc cancels a pick without changing the draft.
     await ev(setup + '.querySelector("[data-setup=pick-listing]").click(); window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))');
     assert.ok(await ev(setup + '.innerText.includes("Pick cancelled.")'));
@@ -450,6 +480,9 @@ async function connect(url) {
     assert.equal(await ev('document.getElementById("stash-model-link-heading-badge").parentElement.className'), 'ProfileName');
     const nsCards = '[...document.querySelectorAll(".tile")].map(c=>c.querySelector(".stash-model-link-video-badge") ? "badge" : c.querySelector(".stash-exists-tag")?.getAttribute("data-stash-via") || "")';
     await wait(nsCards + '.join("|")==="badge|badge|none"');
+    // Performer links inside the video cards are marked (green with a check), never with a performer badge on the card.
+    await wait('document.querySelectorAll("a.star[data-sml-model=\\"7\\"]").length===3');
+    assert.equal(await ev('document.querySelectorAll(".tile .stash-model-link-model-badge").length'), 0);
     await go('/watch/80001/ns-title', NS);
     await wait(badge + '==="In Stash #90 (url)"');
     console.log('browser test OK');

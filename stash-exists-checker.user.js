@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Stash Exists Checker - Reptyle
 // @namespace    local.stash-exists-checker
-// @version      4.1.0
-// @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, Adult Time, the Aylo network (Brazzers, BangBros, Reality Kings, ...); any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
+// @version      4.2.0
+// @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, the Gamma members sites Adult Time and DFXtra, the Aylo network (Brazzers, BangBros, Reality Kings, ...); any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
 // @match        *://*/*
 // @updateURL    https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
@@ -21,7 +21,7 @@
 
 (function () {
   'use strict';
-  const VERSION = '4.1.0';
+  const VERSION = '4.2.0';
   // One adapter per site or network: everything page-specific lives here, the core below is generic. Sites set up with the
   // picker are stored as JSON profiles and turned into the same adapter shape by profileSite (see "Site profiles" below).
   // hosts: page hosts the adapter runs on. detail/listing: model page paths.
@@ -65,40 +65,7 @@
     scenePage: /^\/movies\/\d+/,
     sceneTitleSel: 'h1',
     cardTags: true
-  }, {
-    // Gamma network members area. A scene keeps its numeric id on every Gamma site (adulttime, evilangel, puretaboo ...),
-    // so all /en/video/ URLs in Stash count. The members DOM is only partly known: the name comes from the URL,
-    // the panel floats, and cards are the outermost elements around exactly one scene link.
-    id: 'adulttime',
-    hosts: ['members.adulttime.com'],
-    detail: /^\/[a-z]{2}\/pornstar\/(?:view\/)?[^/]+\/\d+/i,
-    listing: /^\/[a-z]{2}\/pornstars\/?$/i,
-    headingSel: 'h1',
-    anchorSel: '',
-    headingFallbackSel: 'h1',
-    nameFromUrl: gammaNameFromUrl,
-    // "See all" on a pornstar page opens /en/videos?refinementList[actors.name][0]=<Name>.
-    modelNameParam: 'refinementList[actors.name][0]',
-    videoCardSel: '.ListingGrid-ListingGridItem, [class*="SceneThumb"]',
-    videoLinkSel: 'a[href*="/video/"]',
-    // Members cards: the scene link wraps only the image, the title is a plain h2.Title next to a channel link.
-    videoTitleSel: 'h2.Title, [class*="SceneTitle"]',
-    modelLinkSel: 'a[href*="/pornstar/"]',
-    modelCardSel: '.ListingGrid-ListingGridItem, [class*="ActorThumb"]',
-    modelEntrySel: '.ListingGrid-ListingGridItem',
-    modelNameSel: '[class*="ActorThumb-Name"], [class*="ActorName"]',
-    sceneUrlParts: ['/en/video/'],
-    sceneKey: extractGammaSceneId,
-    modelKey: extractGammaActorId,
-    modelUrl: function (origin, key, href) { var u = new URL(href, origin); return u.origin + u.pathname.replace(/\/+$/, ''); },
-    // Gamma actor ids differ between Gamma sites, so only Adult Time's own URLs count.
-    performerUrlRe: /^https?:\/\/(?:[a-z0-9-]+\.)?adulttime\.com\//i,
-    // Members cards rarely have a Stash URL (Stash holds the tour URLs of many Gamma sites): tags also match by title and file.
-    cardTags: true,
-    // /en/video/<channel>/<Title-Slug>/<id>: id and title come from the URL; the badge floats until a title is picked.
-    scenePage: /^\/[a-z]{2}\/video\/(?:[^/]+\/)+\d+\/?$/i,
-    sceneTitleFromUrl: gammaTitleFromUrl
-  }, {
+  }, gammaSite('adulttime', 'members.adulttime.com', 'adulttime.com'), gammaSite('dfxtra', 'members.dfxtra.com', 'dfxtra.com'), {
     // Aylo members areas (site-ma.<brand>.com; Brazzers confirmed, the other brands run the same platform). Members links
     // are /scene/<id>/<slug> and /model/<id>/<slug>. A scene keeps one release id across the whole network, and Stash
     // holds the tour URL of whichever site its scraper used (a Brazzers scene under bangbros.com/video/<id>/ is common),
@@ -134,6 +101,43 @@
     sceneTitleFromUrl: ayloTitleFromUrl,
     cardTags: true
   }];
+  // Gamma network members areas (Adult Time, DFXtra, ...): one adapter per members site, the same platform and DOM. A scene
+  // keeps its numeric id on every Gamma site (adulttime, evilangel, puretaboo, dfxtra ...), so all /en/video/ URLs in Stash
+  // count; actor ids differ between Gamma sites, so only the site's own performer URLs carry model ids. The name comes from
+  // the URL, the panel floats, and cards are the outermost elements around exactly one scene link.
+  function gammaSite(id, host, domain) {
+    return {
+      id: id,
+      hosts: [host],
+      detail: /^\/[a-z]{2}\/pornstar\/(?:view\/)?[^/]+\/\d+/i,
+      listing: /^\/[a-z]{2}\/pornstars\/?$/i,
+      headingSel: 'h1',
+      anchorSel: '',
+      headingFallbackSel: 'h1',
+      nameFromUrl: gammaNameFromUrl,
+      // "See all" on a pornstar page opens /en/videos?refinementList[actors.name][0]=<Name>.
+      modelNameParam: 'refinementList[actors.name][0]',
+      videoCardSel: '.ListingGrid-ListingGridItem, [class*="SceneThumb"]',
+      videoLinkSel: 'a[href*="/video/"]',
+      // Members cards: the scene link wraps only the image, the title is a plain h2.Title next to a channel link.
+      videoTitleSel: 'h2.Title, [class*="SceneTitle"]',
+      modelLinkSel: 'a[href*="/pornstar/"]',
+      modelCardSel: '.ListingGrid-ListingGridItem, [class*="ActorThumb"]',
+      modelEntrySel: '.ListingGrid-ListingGridItem',
+      modelNameSel: '[class*="ActorThumb-Name"], [class*="ActorName"]',
+      sceneUrlParts: ['/en/video/'],
+      sceneKey: extractGammaSceneId,
+      modelKey: extractGammaActorId,
+      modelUrl: function (origin, key, href) { var u = new URL(href, origin); return u.origin + u.pathname.replace(/\/+$/, ''); },
+      // Members cards rarely have a Stash URL (Stash holds the tour URLs of many Gamma sites): tags also match by title and file.
+      cardTags: true,
+      // /en/video/<channel>/<Title-Slug>/<id>: id and title come from the URL; the badge floats until a title is picked.
+      scenePage: /^\/[a-z]{2}\/video\/(?:[^/]+\/)+\d+\/?$/i,
+      sceneTitleFromUrl: gammaTitleFromUrl,
+      // Actor ids differ between Gamma sites, so only the site's own performer URLs carry model ids.
+      performerUrlRe: new RegExp('^https?://(?:[a-z0-9-]+\\.)?' + escapeRe(domain) + '/', 'i')
+    };
+  }
   // Structured log sink shared by the local userscripts (docker-workspace/docs/userscripts.md): entries are batched to
   // the collector on localhost:7790 through GM_xmlhttpRequest. The buffer is memory-only; while the collector is down
   // up to 500 entries wait and are retried with backoff.
@@ -226,67 +230,93 @@
   }
   function keyModeOf(path, prefix) { return pathSegments(String(path).slice(prefix ? prefix.length - 1 : 0)).some(function (s) { return /^\d+$/.test(s); }) ? 'id' : 'slug'; }
   // Key of a link or a Stash URL: the last numeric path segment (id mode) or the last segment (slug mode). Links on the
-  // site itself must start with the prefix; URLs on other hosts (the tour URLs Stash holds) are keyed by path alone.
-  function profileKey(host, prefix, mode) {
+  // site itself must start with one of the prefixes (each with its own mode); URLs on other hosts (the tour URLs Stash
+  // holds) are keyed by path alone, in the first prefix's mode.
+  function profileKeys(host, rules) {
+    rules = rules.filter(function (r) { return r && typeof r.prefix === 'string'; });
     return function (href) {
       var u;
       try { u = new URL(String(href || ''), 'https://' + host); } catch (e) { return null; }
-      var path = u.pathname;
-      if (u.hostname.toLowerCase() === host) { if (prefix && path.toLowerCase().indexOf(prefix.toLowerCase()) !== 0) return null; path = path.slice(prefix ? prefix.length - 1 : 0); }
+      var path = u.pathname, mode = rules.length ? rules[0].mode : 'id';
+      if (u.hostname.toLowerCase() === host && rules.length) {
+        var lower = path.toLowerCase(), rule = null;
+        for (var r = 0; r < rules.length && !rule; r++) if (!rules[r].prefix || lower.indexOf(rules[r].prefix.toLowerCase()) === 0) rule = rules[r];
+        if (!rule) return null;
+        path = path.slice(rule.prefix ? rule.prefix.length - 1 : 0);
+        mode = rule.mode;
+      }
       var segs = pathSegments(path);
       if (mode === 'slug') { var s = segs.length ? segs[segs.length - 1].toLowerCase().replace(/\.(?:html?|php|aspx?)$/, '') : ''; return s || null; }
       for (var i = segs.length - 1; i >= 0; i--) if (/^\d+$/.test(segs[i])) return segs[i];
       return null;
     };
   }
+  function profileKey(host, prefix, mode) { return profileKeys(host, [{ prefix: prefix || '', mode: mode || 'id' }]); }
   // Domain Stash URLs of this site most likely contain: members.example.com -> example.com, a.b.co.uk -> b.co.uk.
   function registrableDomain(host) { var l = String(host || '').toLowerCase().split('.'); return l.slice(l.length > 2 && l[l.length - 2].length <= 3 && l[l.length - 1].length === 2 ? -3 : -2).join('.'); }
   function selectorAttr(prefix) { return prefix ? 'a[href*="' + prefix.replace(/["\\]/g, '\\$&') + '"]' : NO_LINKS; }
   function sameDomainUrl(origin, key, href) { var u = new URL(href, origin); return u.origin + u.pathname.replace(/\/+$/, ''); }
+  // The pick kinds of a profile. Each holds one example (an object, as stored before 4.2.0) or several (an array); every
+  // example widens the rules: paths and selectors are joined, link prefixes collected.
+  var PICK_KINDS = ['model', 'listing', 'card', 'video', 'performerLink'];
+  function examples(x) { return !x ? [] : Array.isArray(x) ? x.filter(Boolean) : [x]; }
+  function unique(list) { return list.filter(function (x, i) { return x && list.indexOf(x) === i; }); }
+  function joinSel(list) { return unique(list).join(', '); }
+  function joinPaths(list) { list = unique(list); return list.length ? new RegExp(list.length === 1 ? list[0] : list.map(function (x) { return '(?:' + x + ')'; }).join('|'), 'i') : null; }
+  function keyRules(list) { var seen = {}; return list.filter(function (x) { if (!x || typeof x.linkPrefix !== 'string' || seen[x.linkPrefix]) return false; seen[x.linkPrefix] = 1; return true; }).map(function (x) { return { prefix: x.linkPrefix, mode: x.key || 'id' }; }); }
   // Returns '' for a usable profile, else what is wrong with it.
   function validProfile(p) {
     if (!p || typeof p !== 'object' || typeof p.host !== 'string' || !/^[a-z0-9.-]+$/i.test(p.host)) return 'host missing';
-    var parts = ['model', 'listing', 'card', 'video'];
-    for (var i = 0; i < parts.length; i++) {
-      var x = p[parts[i]];
-      if (x === undefined || x === null) continue;
-      if (typeof x !== 'object') return parts[i] + ' is not an object';
-      if (x.path !== undefined) { try { new RegExp(x.path); } catch (e) { return parts[i] + '.path is not a regex'; } }
-      var sels = ['nameSel', 'titleSel'];
-      for (var j = 0; j < sels.length; j++) if (x[sels[j]] !== undefined && (typeof x[sels[j]] !== 'string' || x[sels[j]].length > 300)) return parts[i] + '.' + sels[j] + ' is not a selector';
-      if (x.linkPrefix !== undefined && !/^(?:\/[^"\\]*\/)?$/.test(x.linkPrefix)) return parts[i] + '.linkPrefix must start and end with /';
-      if (x.key !== undefined && x.key !== 'id' && x.key !== 'slug') return parts[i] + '.key must be id or slug';
+    for (var i = 0; i < PICK_KINDS.length; i++) {
+      var kind = PICK_KINDS[i], v = p[kind];
+      if (v === undefined || v === null) continue;
+      if (typeof v !== 'object') return kind + ' is not an object';
+      var list = examples(v);
+      for (var e = 0; e < list.length; e++) {
+        var x = list[e], at = kind + (Array.isArray(v) ? '[' + e + ']' : '');
+        if (typeof x !== 'object') return at + ' is not an object';
+        if (x.path !== undefined) { try { new RegExp(x.path); } catch (err) { return at + '.path is not a regex'; } }
+        var sels = ['nameSel', 'titleSel', 'cardSel'];
+        for (var j = 0; j < sels.length; j++) if (x[sels[j]] !== undefined && (typeof x[sels[j]] !== 'string' || x[sels[j]].length > 300)) return at + '.' + sels[j] + ' is not a selector';
+        if (x.linkPrefix !== undefined && !/^(?:\/[^"\\]*\/)?$/.test(x.linkPrefix)) return at + '.linkPrefix must start and end with /';
+        if (x.key !== undefined && x.key !== 'id' && x.key !== 'slug') return at + '.key must be id or slug';
+      }
     }
     if (p.stash && p.stash.sceneParts && !(Array.isArray(p.stash.sceneParts) && p.stash.sceneParts.every(function (s) { return typeof s === 'string' && s.trim(); }))) return 'stash.sceneParts must be a list of URL fragments';
     return '';
   }
   // Adapter from a profile; base is the built-in adapter of the same host, if any.
   function profileSite(p, base) {
-    var m = p.model || {}, l = p.listing || {}, c = p.card || {}, v = p.video || {};
+    var M = examples(p.model), L = examples(p.listing), C = examples(p.card), V = examples(p.video), PL = examples(p.performerLink);
+    var get = function (list, field) { return list.map(function (x) { return x[field]; }); };
+    var nameSel = joinSel(get(M, 'nameSel')), listNameSel = joinSel(get(L, 'nameSel')), titleSel = joinSel(get(C, 'titleSel'));
+    var pageTitleSel = joinSel(get(V.filter(function (x) { return x.path; }), 'titleSel')), videoPath = joinPaths(get(V.filter(function (x) { return x.titleSel; }), 'path'));
     if (base) {
       var s = Object.assign({}, base, { profile: p });
-      if (m.nameSel) { s.headingSel = m.nameSel; s.headingFallbackSel = m.nameSel; }
-      if (l.nameSel) s.modelNameSel = l.nameSel;
-      if (c.titleSel) s.videoTitleSel = c.titleSel;
-      if (v.path && v.titleSel) { s.scenePage = new RegExp(v.path, 'i'); s.sceneTitleSel = v.titleSel; }
+      if (nameSel) { s.headingSel = nameSel; s.headingFallbackSel = nameSel; }
+      if (listNameSel) s.modelNameSel = listNameSel;
+      if (titleSel) s.videoTitleSel = titleSel;
+      if (videoPath && pageTitleSel) { s.scenePage = videoPath; s.sceneTitleSel = pageTitleSel; }
       if (typeof p.tags === 'boolean') s.cardTags = p.tags;
       return s;
     }
     var host = p.host.toLowerCase();
-    var cPrefix = c.linkPrefix || v.linkPrefix || '', mPrefix = m.linkPrefix || l.linkPrefix || '';
+    var sceneRules = keyRules(C.concat(V)), modelRules = keyRules(M.concat(L, PL));
+    // Video cards by their own class when every card pick found one, else by structure.
+    var cardSels = get(C, 'cardSel'), cardSel = C.length && cardSels.every(Boolean) ? joinSel(cardSels) : '';
     var parts = p.stash && p.stash.sceneParts && p.stash.sceneParts.length ? p.stash.sceneParts : [registrableDomain(host)];
     var domains = parts.map(function (x) { return x.replace(/^https?:\/\//, '').split('/')[0]; }).filter(Boolean);
     return {
       id: 'profile:' + host, hosts: [host], profile: p, strictName: true,
-      detail: m.path ? new RegExp(m.path, 'i') : NEVER, listing: l.path ? new RegExp(l.path, 'i') : NEVER,
-      headingSel: m.nameSel || '', anchorSel: '', headingFallbackSel: m.nameSel || '',
-      videoCardSel: '', videoLinkSel: selectorAttr(cPrefix), videoTitleSel: c.titleSel || '',
-      modelLinkSel: selectorAttr(mPrefix), modelCardSel: '', modelEntrySel: '', modelNameSel: l.nameSel || '',
-      sceneUrlParts: cPrefix ? parts : [],
-      sceneKey: profileKey(host, cPrefix, c.key || v.key || 'id'), modelKey: profileKey(host, mPrefix, m.key || l.key || 'id'),
+      detail: joinPaths(get(M, 'path')) || NEVER, listing: joinPaths(get(L, 'path')) || NEVER,
+      headingSel: nameSel, anchorSel: '', headingFallbackSel: nameSel,
+      videoCardSel: cardSel, videoLinkSel: sceneRules.length ? sceneRules.map(function (r) { return selectorAttr(r.prefix); }).join(', ') : NO_LINKS, videoTitleSel: titleSel,
+      modelLinkSel: modelRules.length ? modelRules.map(function (r) { return selectorAttr(r.prefix); }).join(', ') : NO_LINKS, modelCardSel: '', modelEntrySel: '', modelNameSel: listNameSel,
+      sceneUrlParts: sceneRules.length ? parts : [],
+      sceneKey: profileKeys(host, sceneRules), modelKey: profileKeys(host, modelRules),
       modelUrl: sameDomainUrl,
       performerUrlRe: domains.length ? new RegExp('^https?://(?:[a-z0-9-]+\\.)*(?:' + domains.map(escapeRe).join('|') + ')/', 'i') : NEVER,
-      scenePage: v.path && v.titleSel ? new RegExp(v.path, 'i') : undefined, sceneTitleSel: v.titleSel, cardTags: !!p.tags && !!cPrefix
+      scenePage: videoPath && pageTitleSel ? videoPath : undefined, sceneTitleSel: pageTitleSel || undefined, cardTags: !!p.tags && sceneRules.length > 0
     };
   }
   var STASH_ORIGIN = 'http://localhost:9999';
@@ -487,15 +517,16 @@
   // The performer list is the same query on every site, so one stored copy serves them all.
   var performerList = cachedList(stashStore, 'performers', fetchPerformerList, buildPerformerMaps);
   function fetchPerformerMap() { return performerList().then(function () { return performerMapCache; }); }
-  function clearModelMarks() { var els = document.querySelectorAll('.' + MODEL_BADGE_CLASS + ', .' + MODEL_ADD_CLASS); for (var ci2 = 0; ci2 < els.length; ci2++) els[ci2].remove(); var names = document.querySelectorAll('[data-sml-name-green="1"]'); for (var cj = 0; cj < names.length; cj++) { names[cj].style.color = ''; names[cj].style.fontWeight = ''; names[cj].removeAttribute('data-sml-name-green'); } }
+  function clearModelMarks() { var els = document.querySelectorAll('.' + MODEL_BADGE_CLASS + ', .' + MODEL_ADD_CLASS); for (var ci2 = 0; ci2 < els.length; ci2++) els[ci2].remove(); var cards = document.querySelectorAll('[data-sml-model-card]'); for (var ck = 0; ck < cards.length; ck++) cards[ck].removeAttribute('data-sml-model-card'); var names = document.querySelectorAll('[data-sml-name-green="1"]'); for (var cj = 0; cj < names.length; cj++) { names[cj].style.color = ''; names[cj].style.fontWeight = ''; names[cj].removeAttribute('data-sml-name-green'); } }
   // The handlers below only read pageUrl synchronously and performerMapCache at click time (the shared cache), so the loop closures are safe.
   // eslint-disable-next-line no-loop-func
-  function markModelCards(map) { var links = document.querySelectorAll(site.modelLinkSel); for (var i = 0; i < links.length; i++) { var a = links[i]; var href = a.getAttribute('href') || a.href || ''; var rid = site.modelKey(href); if (!rid) continue; var card = modelCardForLink(a); if (!card || card.querySelector(':scope > .' + MODEL_BADGE_CLASS)) continue; var name = modelNameForLink(a, card); var hit = (performerKeyMapCache && performerKeyMapCache[rid]) || (name ? map[normName(name)] : null); if (!hit) continue; try { if (getComputedStyle(card).position === 'static') card.style.position = 'relative'; } catch (e) {} var pageUrl = site.modelUrl(location.origin, rid, href); var hasUrl = (hit.urls || []).some(function (u) { return normUrl(u).toLowerCase() === normUrl(pageUrl).toLowerCase(); }); var b = document.createElement('a'); b.className = MODEL_BADGE_CLASS; b.textContent = '\u2713 IN STASH'; b.href = STASH_ORIGIN + '/performers/' + hit.id; b.target = '_blank'; b.rel = 'noopener'; b.title = hit.name + ' (Stash id ' + hit.id + ')'; b.style.cssText = 'position:absolute;top:6px;left:6px;z-index:5;background:#16a34a;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.4);'; b.addEventListener('click', function (ev) { ev.stopPropagation(); }); card.appendChild(b); var ns = modelNameEl(card); if (ns && !ns.getAttribute('data-sml-name-green')) { ns.style.color = '#22c55e'; ns.style.fontWeight = '700'; ns.setAttribute('data-sml-name-green', '1'); } if (!hasUrl && !card.querySelector(':scope > .' + MODEL_ADD_CLASS)) { (function (h, url, c2) { var add = document.createElement('button'); add.className = MODEL_ADD_CLASS; add.textContent = '+ URL'; add.title = 'Save ' + url + ' on ' + h.name + ' in Stash'; add.style.cssText = 'position:absolute;top:6px;right:6px;z-index:5;background:#b45309;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;border:none;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.4);'; add.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); add.disabled = true; add.textContent = '...'; addPerformerUrl(h, url).then(function (nxt) { if (!nxt) { add.disabled = false; add.textContent = '+ URL'; return; } add.remove(); h.urls = nxt; }).catch(function (err) { add.disabled = false; add.textContent = '+ URL'; alert('Stash update failed: ' + err.message); }); }); c2.appendChild(add); })(hit, pageUrl, card); } } }
+  function markModelCards(map) { var links = document.querySelectorAll(site.modelLinkSel); for (var i = 0; i < links.length; i++) { var a = links[i]; var href = a.getAttribute('href') || a.href || ''; var rid = site.modelKey(href); if (!rid) continue; var card = modelCardForLink(a); if (!card || card.querySelector(':scope > .' + MODEL_BADGE_CLASS)) continue; if (card.querySelector(site.videoLinkSel)) continue; var name = modelNameForLink(a, card); var hit = (performerKeyMapCache && performerKeyMapCache[rid]) || (name ? map[normName(name)] : null); if (!hit) continue; try { if (getComputedStyle(card).position === 'static') card.style.position = 'relative'; } catch (e) {} var pageUrl = site.modelUrl(location.origin, rid, href); var hasUrl = (hit.urls || []).some(function (u) { return normUrl(u).toLowerCase() === normUrl(pageUrl).toLowerCase(); }); card.setAttribute('data-sml-model-card', '1'); var b = document.createElement('a'); b.className = MODEL_BADGE_CLASS; b.textContent = '\u2713 PERFORMER IN STASH'; b.href = STASH_ORIGIN + '/performers/' + hit.id; b.target = '_blank'; b.rel = 'noopener'; b.title = hit.name + ' (Stash id ' + hit.id + ')'; b.style.cssText = 'position:absolute;top:6px;left:6px;z-index:5;background:#7c3aed;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.4);'; b.addEventListener('click', function (ev) { ev.stopPropagation(); }); card.appendChild(b); var ns = modelNameEl(card); if (ns && !ns.getAttribute('data-sml-name-green')) { ns.style.color = '#22c55e'; ns.style.fontWeight = '700'; ns.setAttribute('data-sml-name-green', '1'); } if (!hasUrl && !card.querySelector(':scope > .' + MODEL_ADD_CLASS)) { (function (h, url, c2) { var add = document.createElement('button'); add.className = MODEL_ADD_CLASS; add.textContent = '+ URL'; add.title = 'Save ' + url + ' on ' + h.name + ' in Stash'; add.style.cssText = 'position:absolute;top:6px;right:6px;z-index:5;background:#b45309;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;border:none;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.4);'; add.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); add.disabled = true; add.textContent = '...'; addPerformerUrl(h, url).then(function (nxt) { if (!nxt) { add.disabled = false; add.textContent = '+ URL'; return; } add.remove(); h.urls = nxt; }).catch(function (err) { add.disabled = false; add.textContent = '+ URL'; alert('Stash update failed: ' + err.message); }); }); c2.appendChild(add); })(hit, pageUrl, card); } } }
   function performerForLink(a, href) { var key = site.modelKey(href); if (!key) return null; var hit = performerKeyMapCache && performerKeyMapCache[key]; if (hit) return hit; var n = site.nameFromUrl ? site.nameFromUrl(href) : ''; if (!n) { n = (a.innerText || '').trim(); if (n.length > 80) n = ''; } return n ? (performerMapCache[normName(n)] || null) : null; }
   function unmarkModelLink(a) { var c = a.querySelector('[' + MODEL_LINK_CHECK + ']'); if (c) c.remove(); a.style.color = ''; a.style.fontWeight = ''; a.title = a.getAttribute('data-sml-prev-title') || ''; a.removeAttribute('data-sml-prev-title'); a.removeAttribute('data-sml-model'); }
-  // Every model link with text outside model listings: green with a check when the performer is in Stash
-  // (by the model id in a saved URL, else by name). Listings get card badges from markModelCards instead.
-  function markModelLinks() { if (!performerMapCache || site.listing.test(location.pathname)) return; var links = document.querySelectorAll(site.modelLinkSel); for (var i = 0; i < links.length; i++) { var a = links[i]; if (a.closest('#' + PANEL_ID)) continue; var hit = performerForLink(a, a.getAttribute('href') || a.href || ''); var cur = a.getAttribute('data-sml-model'); if (cur && (!hit || cur !== String(hit.id))) unmarkModelLink(a); if (!hit || a.getAttribute('data-sml-model') || !(a.innerText || '').trim()) continue; a.setAttribute('data-sml-model', String(hit.id)); a.setAttribute('data-sml-prev-title', a.title || ''); a.title = 'In Stash: ' + hit.name + ' (Stash id ' + hit.id + ')'; a.style.color = '#22c55e'; a.style.fontWeight = '700'; var chk = document.createElement('span'); chk.setAttribute(MODEL_LINK_CHECK, '1'); chk.textContent = '\u2713 '; chk.style.cssText = 'color:#22c55e;font-weight:800;'; a.insertBefore(chk, a.firstChild); } }
+  // Every model link with text, on every page: green with a check when the performer is in Stash (by the model id in a
+  // saved URL, else by name). Links inside a model card that already has its badge (markModelCards, listings) are skipped;
+  // performer links inside video cards are marked here, never with a card badge.
+  function markModelLinks() { if (!performerMapCache) return; var links = document.querySelectorAll(site.modelLinkSel); for (var i = 0; i < links.length; i++) { var a = links[i]; if (a.closest('#' + PANEL_ID + ', [data-sml-model-card]')) continue; var hit = performerForLink(a, a.getAttribute('href') || a.href || ''); var cur = a.getAttribute('data-sml-model'); if (cur && (!hit || cur !== String(hit.id))) unmarkModelLink(a); if (!hit || a.getAttribute('data-sml-model') || !(a.innerText || '').trim()) continue; a.setAttribute('data-sml-model', String(hit.id)); a.setAttribute('data-sml-prev-title', a.title || ''); a.title = 'In Stash: ' + hit.name + ' (Stash id ' + hit.id + ')'; a.style.color = '#22c55e'; a.style.fontWeight = '700'; var chk = document.createElement('span'); chk.setAttribute(MODEL_LINK_CHECK, '1'); chk.textContent = '\u2713 '; chk.style.cssText = 'color:#22c55e;font-weight:800;'; a.insertBefore(chk, a.firstChild); } }
   function runListing(force) { if (!force && location.pathname === lastPath && performerMapCache) { try { markModelCards(performerMapCache); } catch (e) {} return; } lastPath = location.pathname; removePanel(); resetHeading(); performerFound = false; fetchPerformerMap().then(function (map) { markModelCards(map); }).catch(function () {}); }
   function findAnchor() { return site.anchorSel ? (q(site.anchorSel) || q(site.headingFallbackSel)) : null; }
   function removePanel() { var old = document.getElementById(PANEL_ID); if (old) old.remove(); }
@@ -880,7 +911,7 @@
     passMemo = new Map();
     try {
       try { if (sceneMapCache) { var cards = videoCards(); markVideos(sceneMapCache, performerFound ? performerTitleMapCache : null, cards); updateVideoCount(cards); } } catch (e) {}
-      try { if (performerMapCache) { if (site.listing.test(location.pathname)) markModelCards(performerMapCache); else markModelLinks(); } } catch (e2) {}
+      try { if (performerMapCache) { if (site.listing.test(location.pathname)) markModelCards(performerMapCache); markModelLinks(); } } catch (e2) {}
       try { run(false); } catch (e3) {}
       if (checks) { checkDetail(); checkCards(); }
     } finally { passMemo = null; observer.takeRecords(); }
@@ -906,7 +937,8 @@
       { kind: 'model', label: 'Performer name', where: 'on a performer/model page', hint: 'Open a performer page, press Pick, then click the performer name.' },
       { kind: 'card', label: 'Video title in a list', where: 'on a page that lists videos', hint: 'Open a page with video cards, press Pick, then click the title of one video.' },
       { kind: 'video', label: 'Video page title', where: 'on a single video page', hint: 'Open one video, press Pick, then click its title.' },
-      { kind: 'listing', label: 'Model name in a model list', where: 'on a page that lists models (optional)', hint: 'Open the list of models, press Pick, then click the name of one model.' }
+      { kind: 'listing', label: 'Model name in a model list', where: 'on a page that lists only models (optional)', hint: 'Open the list of models (not a page that mixes videos and models), press Pick, then click the name of one model.' },
+      { kind: 'performerLink', label: 'Performer link', where: 'on a video card or video page (optional)', hint: 'Press Pick, then click a performer name that links to the performer page (for example under a video title).' }
     ];
   }
   function setupHost() { return location.hostname.toLowerCase(); }
@@ -916,8 +948,17 @@
   function loadProfiles() { try { var p = GM_getValue(PROFILES_KEY, null); return p && typeof p === 'object' ? p : {}; } catch (e) { return {}; } }
   function draftParts(d) { return d.stash && d.stash.sceneParts && d.stash.sceneParts.length ? d.stash.sceneParts : [registrableDomain(d.host)]; }
   function cssEsc(s) { return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, '\\$&'); }
-  // Class names that look generated (css-1x2y, e1vusg2z1, sc-AbC12) change with every build of a site, so they are skipped.
-  function stableClasses(el) { return Array.prototype.filter.call(el.classList || [], function (c) { return /^[A-Za-z][\w-]{1,40}$/.test(c) && !/\d{3,}|^(?:css|sc|jsx|svelte|stash)-|^[a-z]+[0-9][a-z0-9]{4,}$/i.test(c) && !/^(?:active|hover|focus|selected|open|is-|has-)/.test(c); }).slice(0, 2); }
+  // Class names that look generated change with every build of a site, so they are skipped: css-1x2y, e1vusg2z1, sc-AbC12,
+  // CSS-module hashes (styles_MUaQmnAOb3, Title_title__3xYz1), state modifiers (Link--hover, is-active). Of the rest the two
+  // rarest on the page are used: "SceneThumb-SceneInfo-SceneTitle-Link" says more than "Link".
+  function stableClasses(el) {
+    var cs = Array.prototype.filter.call(el.classList || [], function (c) {
+      // A hash tail has a digit (Title_title__3xYz1); BEM names (performer__name, main__videoTitle) do not and are kept.
+      return /^[A-Za-z][\w-]{1,60}$/.test(c) && !/\d{3,}|^(?:css|sc|jsx|svelte|stash|styles?)[-_]|^[a-z]+[0-9][a-z0-9]{4,}$/i.test(c) &&
+        !/__[A-Za-z]*\d[A-Za-z0-9]*$|_(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{5,}$/.test(c) && !/^(?:active|hover|focus|selected|open|is-|has-)|--(?:hover|active|focus|selected|open)$/i.test(c);
+    });
+    return cs.map(function (c) { return [c, document.getElementsByClassName(c).length]; }).sort(function (a, b) { return a[1] - b[1]; }).slice(0, 2).map(function (x) { return x[0]; });
+  }
   function selectorPart(el) {
     if (el.id && /^[A-Za-z][\w-]{0,40}$/.test(el.id) && !/\d{3,}/.test(el.id) && !/^stash-/.test(el.id)) return '#' + cssEsc(el.id);
     return el.tagName.toLowerCase() + stableClasses(el).map(function (c) { return '.' + cssEsc(c); }).join('');
@@ -962,7 +1003,7 @@
     }
     return null;
   }
-  function derivePick(kind, el) {
+  function derivePick(kind, el, draft) {
     var text = textOf(el), page = location.pathname;
     if (!text) return { error: 'That element has no text; click the name or title itself.' };
     if (kind === 'model') { var mp = linkPrefixOf(page, text); return { path: pathPatternOf(page, text), nameSel: selectorFor(el), linkPrefix: mp, key: keyModeOf(page, mp), sample: { page: page, name: text.slice(0, 80) } }; }
@@ -971,10 +1012,21 @@
     if (!a) return { error: 'No link next to that element; click the title of an entry that links to its own page.' };
     var u = new URL(a.href, location.href);
     if (u.host !== location.host) return { error: 'That link leads to another site (' + u.host + ').' };
-    var prefix = linkPrefixOf(u.pathname, kind === 'listing' ? text : ''), key = keyModeOf(u.pathname, prefix);
+    var prefix = linkPrefixOf(u.pathname, kind === 'card' ? '' : text), key = keyModeOf(u.pathname, prefix);
+    if (kind === 'performerLink') return { linkPrefix: prefix, key: key, sample: { page: page, link: u.pathname, name: text.slice(0, 80) } };
     var card = structuralCard(a, selectorAttr(prefix), profileKey(setupHost(), prefix, key)) || a.parentElement;
     var rel = card.contains(el) ? selectorFor(el, card) : '';
-    if (kind === 'card') return { linkPrefix: prefix, titleSel: rel, key: key, sample: { page: page, link: u.pathname, title: text.slice(0, 120) } };
+    // The card's own class, when it has a stable one shared by other cards, finds cards more reliably than structure.
+    var cardPart = selectorPart(card), cardSel = /^[a-z0-9]+\./.test(cardPart) && document.querySelectorAll(cardPart).length >= 2 ? cardPart : '';
+    if (kind === 'card') return { linkPrefix: prefix, titleSel: rel, cardSel: cardSel, key: key, sample: { page: page, link: u.pathname, title: text.slice(0, 120) } };
+    // A name inside a video card is a performer link, not a model list entry: a page of videos is no model list (marking
+    // it as one put performer badges on the video cards).
+    var videoPrefixes = keyRules(examples(draft && draft.card).concat(examples(draft && draft.video))).map(function (r) { return r.prefix; });
+    var inVideoCard = Array.prototype.some.call(card.querySelectorAll('a[href]'), function (x) {
+      var pth = new URL(x.href, location.href).pathname;
+      return x !== a && (videoPrefixes.some(function (vp) { return vp && pth.indexOf(vp) === 0; }) || /^\/(?:[a-z]{2}\/)?(?:videos?|scenes?|movies?|watch|clips?|updates?|films?|episodes?|trailers?)\/./i.test(pth));
+    });
+    if (inVideoCard) return { convertedTo: 'performerLink', linkPrefix: prefix, key: key, sample: { page: page, link: u.pathname, name: text.slice(0, 80) } };
     return { path: '^' + escapeRe(page.replace(/\/+$/, '')) + '/?$', nameSel: rel, linkPrefix: prefix, key: key, sample: { page: page, link: u.pathname, name: text.slice(0, 80) } };
   }
   // How many entries of the picked kind this page links, by the derived prefix and key rule.
@@ -988,46 +1040,110 @@
   function pickSummary(kind, p) {
     if (kind === 'model') return 'Name "' + p.sample.name + '" from ' + p.nameSel + '; performer pages: ' + p.path;
     if (kind === 'video') return 'Title "' + p.sample.title + '" from ' + p.titleSel + '; video pages: ' + p.path;
-    if (kind === 'card') return 'Videos linked as ' + p.linkPrefix + '… (' + p.key + '), title from ' + (p.titleSel || 'the link') + ', e.g. "' + p.sample.title + '"';
+    if (kind === 'card') return 'Videos linked as ' + p.linkPrefix + '… (' + p.key + '), title from ' + (p.titleSel || 'the link') + (p.cardSel ? ', cards ' + p.cardSel : '') + ', e.g. "' + p.sample.title + '"';
+    if (kind === 'performerLink') return 'Performers linked as ' + p.linkPrefix + '… (' + p.key + '), e.g. "' + p.sample.name + '"';
     return 'Models linked as ' + p.linkPrefix + '… (' + p.key + ') on ' + p.path + ', name from ' + (p.nameSel || 'the link');
   }
   function stopPick() { if (picking) { var off = picking; picking = null; off(); } }
+  // The picker. Sites often lay a transparent link over a whole card or make titles click-through (pointer-events:none),
+  // so the element the browser reports under the mouse is rarely the title. While picking, every element is made
+  // hit-testable, all elements under the pointer are collected, and the deepest one with its own text is offered first.
+  // A label names it; the arrow keys adjust it (up: parent, down: back, left/right: the other elements under the pointer);
+  // Enter or a click picks it, Esc cancels. Clicks never reach the site.
   function startPick(kind, label) {
     stopPick();
-    var box = document.createElement('div');
+    var box = document.createElement('div'), tip = document.createElement('div'), style = document.createElement('style');
     box.setAttribute('data-setup', 'box');
-    box.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;border:2px solid #f59e0b;background:rgba(245,158,11,.15);border-radius:3px;display:none;';
-    document.documentElement.appendChild(box);
-    function onPage(t) { return t && t.nodeType === 1 && !t.closest('#userscript-dock, #' + SETUP_ID); }
-    function over(ev) { if (!onPage(ev.target)) { box.style.display = 'none'; return; } var r = ev.target.getBoundingClientRect(); box.style.cssText += 'display:block;left:' + r.left + 'px;top:' + r.top + 'px;width:' + r.width + 'px;height:' + r.height + 'px;'; }
-    // Capture on window runs before the site's own handlers (single-page routers listen at their root), so a pick never
-    // follows a link or opens a player.
-    function block(ev) { if (!onPage(ev.target)) return; ev.preventDefault(); ev.stopImmediatePropagation(); if (ev.type === 'click') { var t = ev.target; stopPick(); finishPick(kind, t); } }
-    function keys(ev) { if (ev.key === 'Escape') { ev.preventDefault(); stopPick(); renderSetup(setupState(), 'Pick cancelled.'); } }
-    var types = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick'];
+    box.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;box-sizing:border-box;border:2px solid #f59e0b;background:rgba(245,158,11,.15);border-radius:3px;display:none;';
+    tip.setAttribute('data-setup', 'tip');
+    tip.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;max-width:460px;padding:2px 6px;border-radius:4px;background:#f59e0b;color:#111;font:11px/1.4 system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:none;';
+    style.setAttribute('data-setup', 'style');
+    style.textContent = 'body * { pointer-events: auto !important; }';
+    document.documentElement.append(style, box, tip);
+    var stack = [], index = 0, current = null, trail = [], lastX = -1, lastY = -1;
+    function onPage(t) { return !!t && t.nodeType === 1 && t !== box && t !== tip && t !== document.body && t !== document.documentElement && !t.closest('#userscript-dock, #' + SETUP_ID); }
+    function ownText(e) { for (var n = e.firstChild; n; n = n.nextSibling) if (n.nodeType === 3 && n.nodeValue.trim()) return true; return false; }
+    function show(e) {
+      current = e || null;
+      if (!current) { box.style.display = 'none'; tip.style.display = 'none'; return; }
+      var r = current.getBoundingClientRect();
+      Object.assign(box.style, { display: 'block', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+      tip.textContent = selectorPart(current) + ' — ' + (textOf(current).slice(0, 70) || '(no text)') + '   ↑↓←→ adjust, Enter/click pick, Esc cancel';
+      Object.assign(tip.style, { display: 'block', left: Math.max(0, Math.min(r.left, innerWidth - 300)) + 'px', top: (r.top > 24 ? r.top - 22 : Math.min(r.bottom + 2, innerHeight - 22)) + 'px' });
+    }
+    function at(x, y) {
+      lastX = x;
+      lastY = y;
+      stack = (document.elementsFromPoint ? document.elementsFromPoint(x, y) : []).filter(onPage);
+      index = Math.max(0, stack.findIndex(ownText));
+      trail = [];
+      show(stack[index]);
+    }
+    function move(ev) { if (ev.clientX !== lastX || ev.clientY !== lastY) at(ev.clientX, ev.clientY); }
+    function over(ev) { if (lastX < 0 && onPage(ev.target)) { trail = []; show(ev.target); } }
+    function scroll() { if (lastX >= 0) at(lastX, lastY); else if (current) show(current); }
+    function choose(target) { var t = current || target; stopPick(); finishPick(kind, t); }
+    function block(ev) {
+      if (ev.target && ev.target.nodeType === 1 && ev.target.closest('#userscript-dock, #' + SETUP_ID)) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      if (ev.type === 'click') choose(onPage(ev.target) ? ev.target : null);
+    }
+    function keys(ev) {
+      var k = ev.key;
+      if (k === 'Escape') { ev.preventDefault(); stopPick(); renderSetup(setupState(), 'Pick cancelled.'); return; }
+      if (!current) return;
+      if (k === 'Enter') { ev.preventDefault(); choose(null); return; }
+      if (k === 'ArrowUp' && onPage(current.parentElement)) { trail.push(current); show(current.parentElement); }
+      else if (k === 'ArrowDown' && trail.length) show(trail.pop());
+      else if ((k === 'ArrowLeft' || k === 'ArrowRight') && stack.length) { index = (index + (k === 'ArrowRight' ? 1 : stack.length - 1)) % stack.length; trail = []; show(stack[index]); }
+      else return;
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+    var types = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu'];
+    window.addEventListener('mousemove', move, true);
     window.addEventListener('mouseover', over, true);
+    window.addEventListener('scroll', scroll, true);
     types.forEach(function (t) { window.addEventListener(t, block, true); });
     window.addEventListener('keydown', keys, true);
-    picking = function () { window.removeEventListener('mouseover', over, true); types.forEach(function (t) { window.removeEventListener(t, block, true); }); window.removeEventListener('keydown', keys, true); box.remove(); };
-    renderSetup(setupState(), 'Click the ' + label.toLowerCase() + ' on the page (it lights up under the mouse). Esc cancels.');
+    picking = function () {
+      window.removeEventListener('mousemove', move, true);
+      window.removeEventListener('mouseover', over, true);
+      window.removeEventListener('scroll', scroll, true);
+      types.forEach(function (t) { window.removeEventListener(t, block, true); });
+      window.removeEventListener('keydown', keys, true);
+      box.remove();
+      tip.remove();
+      style.remove();
+    };
+    renderSetup(setupState(), 'Click the ' + label.toLowerCase() + ' on the page. The orange box shows what will be picked; arrow keys adjust it (↑ parent, ↓ back, ←→ other elements here), Esc cancels.');
   }
   function finishPick(kind, el) {
     var st = setupState();
     if (!st.draft) return;
     var part;
-    try { part = derivePick(kind, el); } catch (e) { part = { error: e.message }; }
+    try { part = derivePick(kind, el, st.draft); } catch (e) { part = { error: e.message }; }
     if (part.error) { log('warn', 'site onboarding', 'pick failed: ' + part.error, { host: st.draft.host, kind: kind, element: describeElement(el) }); renderSetup(st, part.error); return; }
-    st.draft[kind] = part;
+    var note = '';
+    if (part.convertedTo) { note = 'That name sits in a video card, so it was saved as a performer link (a page of videos is not a model list). '; kind = part.convertedTo; delete part.convertedTo; }
+    // Every pick adds an example (an identical one only once); more examples widen the rules.
+    var list = examples(st.draft[kind]), rule = function (x) { return JSON.stringify(Object.assign({}, x, { sample: null })); };
+    var added = !list.some(function (x) { return rule(x) === rule(part); });
+    if (added) list.push(part);
+    st.draft[kind] = list;
     saveSetupState(st);
     var ctx = pageContext(part);
-    log('info', 'site onboarding', kind + ' picked', { host: st.draft.host, kind: kind, part: part, element: describeElement(el), page: ctx });
-    var msg = kind === 'card' || kind === 'listing' ? 'This page links ' + ctx.keys + ' ' + (kind === 'card' ? 'videos' : 'models') + ' that way' + (ctx.sampleKeys.length ? ' (keys ' + ctx.sampleKeys.join(', ') + ').' : '.') : 'Saved in the draft.';
+    log('info', 'site onboarding', kind + ' picked', { host: st.draft.host, kind: kind, example: list.length, part: part, element: describeElement(el), page: ctx });
+    var what = kind === 'card' ? 'videos' : kind === 'model' || kind === 'video' ? '' : 'performers';
+    var msg = note + (added ? '' : 'Same rule as an earlier example. ') + (what ? 'This page links ' + ctx.keys + ' ' + what + ' that way' + (ctx.sampleKeys.length ? ' (keys ' + ctx.sampleKeys.join(', ') + ').' : '.') : 'Saved in the draft.');
     renderSetup(st, msg);
   }
   // What Stash already holds for this site: scene and performer counts per URL fragment and sample scene URLs with the key
   // the profile reads from them (it must match the key of the site's own links).
   function surveyStash(d) {
-    var keyOf = profileSite(Object.assign({}, d, { card: d.card || d.video || { linkPrefix: '/' } }), null).sceneKey;
+    // Keys need a video rule (a video title or video page pick); before that the samples are shown without keys.
+    var keyOf = examples(d.card).length || examples(d.video).length ? profileSite(d, null).sceneKey : null;
     return Promise.all(draftParts(d).map(function (part) {
       return Promise.all([
         gql('query($part:String!){ findScenes(scene_filter:{url:{value:$part, modifier:INCLUDES}}, filter:{per_page:5}){ count scenes{ urls } } }', { part: part }),
@@ -1035,7 +1151,7 @@
       ]).then(function (r) {
         var fs = (r[0] && r[0].findScenes) || {}, urls = [];
         (fs.scenes || []).forEach(function (s) { (s.urls || []).forEach(function (u) { if (u.indexOf(part) >= 0 && urls.length < 3) urls.push(u); }); });
-        return { part: part, scenes: fs.count || 0, performers: (r[1] && r[1].findPerformers && r[1].findPerformers.count) || 0, samples: urls.map(function (u) { return { url: canonUrl(u), key: keyOf(u) }; }) };
+        return { part: part, scenes: fs.count || 0, performers: (r[1] && r[1].findPerformers && r[1].findPerformers.count) || 0, keysChecked: !!keyOf, samples: urls.map(function (u) { return { url: canonUrl(u), key: keyOf ? keyOf(u) : null }; }) };
       });
     }));
   }
@@ -1050,7 +1166,7 @@
   function closeSetup() { stopPick(); var p = document.getElementById(SETUP_ID); if (p) p.remove(); var st = setupState(); st.open = false; saveSetupState(st); }
   function saveProfile(st) {
     var d = st.draft, err = validProfile(d);
-    if (!err && !d.model && !d.card && !d.video && !d.listing) err = 'pick at least one element first';
+    if (!err && !PICK_KINDS.some(function (k) { return examples(d[k]).length; })) err = 'pick at least one element first';
     if (err) { renderSetup(st, 'Not saved: ' + err + '.'); return; }
     d.v = 1;
     d.updatedAt = new Date().toISOString();
@@ -1075,12 +1191,22 @@
     div.appendChild(el('div', 'STASH SETUP · ' + d.host, 'font-weight:700;'));
     var builtIn = site && !site.strictName;
     div.appendChild(el('div', builtIn ? 'Built-in site: picks here only change the name, title and video page selectors.' : site ? 'Set up from your picks; pick again to change them.' : 'Not supported yet. Pick the elements below on this site\'s pages; every pick is logged for built-in support, and "Save and turn on" activates them here right away.', 'color:#94a3b8;'));
+    // Each kind can hold several examples (other pages, other card layouts); each one widens the rules and can be removed.
     setupPicks().forEach(function (p) {
-      var part = d[p.kind], row = section();
-      row.appendChild(el('div', (part ? '✓ ' : '• ') + p.label + ' – ' + p.where, 'font-weight:600;color:' + (part ? '#86efac' : '#e2e8f0') + ';'));
-      row.appendChild(el('div', part ? pickSummary(p.kind, part) : p.hint, 'color:#94a3b8;word-break:break-all;'));
-      row.appendChild(button(part ? 'Pick again' : 'Pick', 'pick-' + p.kind, function () { startPick(p.kind, p.label); }, !part));
-      if (part) row.appendChild(button('Clear', 'clear-' + p.kind, function () { delete d[p.kind]; saveSetupState(st); renderSetup(st, ''); }));
+      var list = examples(d[p.kind]), row = section();
+      row.appendChild(el('div', (list.length ? '✓ ' : '• ') + p.label + ' – ' + p.where + (list.length > 1 ? ' (' + list.length + ' examples)' : ''), 'font-weight:600;color:' + (list.length ? '#86efac' : '#e2e8f0') + ';'));
+      if (!list.length) row.appendChild(el('div', p.hint, 'color:#94a3b8;'));
+      list.forEach(function (x, i) {
+        var item = el('div', '', 'color:#94a3b8;word-break:break-all;margin-top:2px;');
+        item.appendChild(document.createTextNode(pickSummary(p.kind, x) + ' '));
+        var rm = button('×', 'remove-' + p.kind + '-' + i, function () { var cur = examples(d[p.kind]); cur.splice(i, 1); if (cur.length) d[p.kind] = cur; else delete d[p.kind]; saveSetupState(st); renderSetup(st, ''); });
+        rm.title = 'Remove this example';
+        rm.style.padding = '0 6px';
+        item.appendChild(rm);
+        row.appendChild(item);
+      });
+      row.appendChild(button(list.length ? 'Pick another' : 'Pick', 'pick-' + p.kind, function () { startPick(p.kind, p.label); }, !list.length));
+      if (list.length > 1) row.appendChild(button('Clear all', 'clear-' + p.kind, function () { delete d[p.kind]; saveSetupState(st); renderSetup(st, ''); }));
       div.appendChild(row);
     });
     var stash = section();
@@ -1097,7 +1223,8 @@
     }));
     (st.survey || []).forEach(function (s) {
       stash.appendChild(el('div', s.part + ': ' + s.scenes + ' scenes, ' + s.performers + ' performers in Stash', 'color:' + (s.scenes ? '#86efac' : '#fcd34d') + ';'));
-      s.samples.forEach(function (x) { stash.appendChild(el('div', x.url + ' → key ' + (x.key || 'none'), 'color:' + (x.key ? '#94a3b8' : '#fca5a5') + ';font-size:11px;word-break:break-all;')); });
+      if (s.keysChecked === false) stash.appendChild(el('div', 'Pick a video title or video page first, then check again: the keys of these URLs need its rule.', 'color:#fcd34d;'));
+      s.samples.forEach(function (x) { stash.appendChild(el('div', x.url + (s.keysChecked === false ? '' : ' → key ' + (x.key || 'none (matched by title and file name only)')), 'color:' + (x.key || s.keysChecked === false ? '#94a3b8' : '#fca5a5') + ';font-size:11px;word-break:break-all;')); });
     });
     var tagsRow = el('label', '', 'display:block;margin-top:4px;cursor:pointer;');
     var tagsBox = el('input');

@@ -1,6 +1,6 @@
 {
   "name": "stash-exists-checker",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "private": true,
   "description": "Tampermonkey userscript: shows what is already in local Stash on any site (built in: Reptyle, Adult Time, the Aylo network; others via the setup guide): video badges and card tags, performer match with add-URL button, in-Stash marks",
   "scripts": {

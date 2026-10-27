@@ -147,6 +147,51 @@ test('on a built-in host a profile changes selectors only, never the keys', () =
     assert.equal(s.cardTags, false, 'a profile can switch the card tags off');
     assert.equal(at.cardTags, true, 'the built-in adapter itself is not changed');
 });
+test('DFXtra is a Gamma members site: scene ids shared with every Gamma site, actor ids only from its own URLs', () => {
+    const d = siteFor('members.dfxtra.com'), at = siteFor('members.adulttime.com');
+    assert.equal(d.id, 'dfxtra');
+    assert.equal(d.sceneKey('/en/video/cuckoldsessions/Sit-There-And-Watch/232565'), '232565');
+    assert.equal(d.sceneKey('https://www.evilangel.com/en/video/x/Some-Title/232565'), '232565');
+    assert.deepEqual(d.sceneUrlParts, at.sceneUrlParts, 'one /en/video/ list for the Gamma network');
+    assert.equal(d.modelKey('/en/pornstar/view/Julia-James/123281'), '123281');
+    assert.equal(d.nameFromUrl('/en/pornstar/view/Julia-James/123281'), 'Julia James');
+    assert.ok(d.performerUrlRe.test('https://www.dfxtra.com/en/pornstar/view/Demi-Hawks/107255'));
+    assert.ok(!d.performerUrlRe.test('https://www.adulttime.com/en/pornstar/view/Demi-Hawks/107255'));
+    assert.ok(!at.performerUrlRe.test('https://www.dfxtra.com/en/pornstar/view/Demi-Hawks/107255'));
+    assert.ok(!d.performerUrlRe.test('https://wwwxdfxtra.com/en/pornstar/view/x/1'), 'the dot in the domain is literal');
+});
+test('several examples per pick widen the rules; profiles saved with one example still load', () => {
+    const two = {
+        v: 1, host: 'www.example.com',
+        model: [{ path: '^/models/[^/]+(?:/|$)', nameSel: 'h1.performer__name', linkPrefix: '/models/', key: 'slug' }, { path: '^/stars/\\d+(?:/|$)', nameSel: 'h2.star-name', linkPrefix: '/stars/', key: 'id' }],
+        card: [{ linkPrefix: '/video/', titleSel: 'a.main__videoTitle', cardSel: 'div.main__videoElement', key: 'slug' }, { linkPrefix: '/clip/', titleSel: 'h3.clip-title', cardSel: 'div.clip', key: 'id' }],
+        performerLink: [{ linkPrefix: '/pornstar/', key: 'id' }],
+        tags: true
+    };
+    const s = profileSite(two, null);
+    assert.ok(s.detail.test('/models/harlow-west-325.html') && s.detail.test('/stars/12'));
+    assert.ok(!s.detail.test('/video/x'));
+    assert.equal(s.headingSel, 'h1.performer__name, h2.star-name');
+    assert.equal(s.videoLinkSel, 'a[href*="/video/"], a[href*="/clip/"]');
+    assert.equal(s.videoTitleSel, 'a.main__videoTitle, h3.clip-title');
+    assert.equal(s.videoCardSel, 'div.main__videoElement, div.clip', 'every card pick found a card class');
+    assert.equal(s.modelLinkSel, 'a[href*="/models/"], a[href*="/stars/"], a[href*="/pornstar/"]');
+    // Each prefix keeps its own key mode; tour URLs on other hosts use the first one.
+    assert.equal(s.sceneKey('/video/harlow-west-wrecked-the-car-3585.html'), 'harlow-west-wrecked-the-car-3585');
+    assert.equal(s.sceneKey('/clip/77/x'), '77');
+    assert.equal(s.sceneKey('/other/1'), null);
+    assert.equal(s.modelKey('/pornstar/9/x'), '9');
+    assert.equal(s.modelKey('/models/harlow-west-325.html'), 'harlow-west-325');
+    // A card pick without a card class keeps structural detection for all cards.
+    assert.equal(profileSite({ host: 'www.example.com', card: [{ linkPrefix: '/v/', cardSel: 'div.a' }, { linkPrefix: '/w/' }] }, null).videoCardSel, '');
+    // 4.0/4.1 profiles hold single objects; the DFXtra profile saved then loads unchanged.
+    const old = { v: 1, host: 'members.newsite.example', model: { path: '^/p/\\d+', nameSel: 'h1', linkPrefix: '/p/', key: 'id' }, card: { linkPrefix: '/watch/', titleSel: 'h3', key: 'id' } };
+    assert.equal(validProfile(old), '');
+    assert.equal(profileSite(old, null).videoLinkSel, 'a[href*="/watch/"]');
+    assert.equal(validProfile(two), '');
+    assert.match(validProfile({ host: 'a.example', card: [{ linkPrefix: '/v/' }, { linkPrefix: 'x' }] }), /card\[1\]\.linkPrefix/);
+    assert.match(validProfile({ host: 'a.example', card: [{ cardSel: 5 }] }), /cardSel/);
+});
 test('broken profiles are rejected and ignored', () => {
     assert.equal(validProfile(sampleProfile()), '');
     assert.match(validProfile({}), /host/);
@@ -163,7 +208,7 @@ test('the video badge needs a known video page; card tags run on every built-in 
     assert.equal(r.sceneTitleSel, 'h1');
     assert.equal(r.cardTags, true);
     // (every video page needs a title element or a title from the URL; checked below)
-    assert.deepEqual(SITES.filter(s => s.scenePage).map(s => s.id), ['reptyle', 'adulttime', 'aylo']);
+    assert.deepEqual(SITES.filter(s => s.scenePage).map(s => s.id), ['reptyle', 'adulttime', 'dfxtra', 'aylo']);
     assert.deepEqual(SITES.filter(s => s.sceneTitleSel).map(s => s.id), ['reptyle'], 'title element known on Reptyle only; elsewhere the title comes from the URL until one is picked');
     for (const s of SITES) if (s.scenePage && !s.sceneTitleSel) assert.equal(typeof s.sceneTitleFromUrl, 'function', s.id + ' needs a title source');
     const at = siteFor('members.adulttime.com');
@@ -172,7 +217,7 @@ test('the video badge needs a known video page; card tags run on every built-in 
     assert.equal(gammaTitleFromUrl('/en/video/mommysboy/Be-Polite-To-Our-Guest-Young-Man/209586'), 'Be Polite To Our Guest Young Man');
     assert.equal(gammaTitleFromUrl('https://www.evilangel.com/en/video/Anally-Talented-03/67506'), 'Anally Talented 03');
     assert.equal(gammaTitleFromUrl('/en/video/Room-101-Part-2'), '');
-    assert.deepEqual(SITES.filter(s => s.cardTags).map(s => s.id), ['reptyle', 'adulttime', 'aylo'], 'card titles are known on every built-in site');
+    assert.deepEqual(SITES.filter(s => s.cardTags).map(s => s.id), ['reptyle', 'adulttime', 'dfxtra', 'aylo'], 'card titles are known on every built-in site');
 });
 test('ids come from movie and model links only', () => {
     assert.equal(extractMovieId('https://app.reptyle.com/movies/32219?r=x'), '32219');

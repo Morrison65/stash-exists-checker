@@ -1,13 +1,15 @@
 {
   "name": "stash-exists-checker",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Tampermonkey userscript: badge showing whether a Reptyle video is already in local Stash",
+  "description": "Tampermonkey userscript: shows what is already in local Stash on supported sites (per-site adapters: Reptyle, Adult Time, Brazzers): video badges and dots, performer match with add-URL button, in-Stash marks",
   "scripts": {
     "lint": "node tools/lint-tampermonkey.cjs",
     "test": "node --test test/core.test.cjs",
-    "check": "npm run lint && npm test",
+    "test:browser": "node test/browser.cjs",
+    "version-bump": "node tools/check-version-bump.cjs",
+    "check": "npm run lint && npm test && npm run test:browser && npm run version-bump",
     "lint:ci": "node tools/lint-ci.cjs",
-    "check:ci": "npm run lint:ci && npm test"
+    "check:ci": "npm run lint:ci && npm test && npm run version-bump"
   }
 }

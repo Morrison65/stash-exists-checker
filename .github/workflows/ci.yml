@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -39,3 +41,11 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+      # Installs auto-update from master, so a changed userscript must carry a higher @version.
+      - name: Version bump
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          if [ -z "$BASE_REF" ] || [ "$BASE_REF" = "0000000000000000000000000000000000000000" ]; then BASE_REF=HEAD~1; fi
+          npm run version-bump -- "$BASE_REF"

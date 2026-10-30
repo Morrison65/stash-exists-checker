@@ -145,6 +145,60 @@ test('performer names picked on a video page are performer links, not a model li
     assert.ok(models.listing.test('/models/'));
     assert.equal(models.modelNameSel, 'span.n');
 });
+test('a slug deeper below the prefix (/video/<category>/<slug>) is keyed where it was picked', () => {
+    const s = profileSite({ v: 1, host: 'www.example.com', card: { linkPrefix: '/video/', titleSel: 'h3', key: 'slug', slugAt: 2 } }, null);
+    assert.equal(s.sceneKey('/video/some-category/some-scene'), 'some-scene');
+    assert.equal(s.sceneKey('/video/some-category/some-scene/trailer'), 'some-scene');
+    assert.equal(s.sceneKey('/video/some-category'), null, 'the category page is no video');
+    assert.equal(s.sceneKey('https://www.example.com/video/some-category/some-scene'), 'some-scene');
+    assert.equal(s.sceneKey('https://tour.other.example/video/some-category/some-scene'), 'some-scene', 'other hosts: last segment');
+    assert.equal(validProfile({ host: 'a.example', card: { linkPrefix: '/v/', key: 'slug', slugAt: 2 } }), '');
+    assert.match(validProfile({ host: 'a.example', card: { linkPrefix: '/v/', key: 'slug', slugAt: 0 } }), /slugAt/);
+    assert.match(validProfile({ host: 'a.example', card: { linkPrefix: '/v/', key: 'slug', slugAt: 1.5 } }), /slugAt/);
+});
+test('members areas of the Nuxt platform: members links, tour URLs and older /girls/ performer URLs share one key', () => {
+    for (const [id, host] of [['holed', 'holed.com'], ['exotic4k', 'exotic4k.com'], ['passionhd', 'passion-hd.com'], ['povd', 'povd.com']]) {
+        const s = siteFor(host);
+        assert.equal(s.id, id);
+        assert.equal(s.cardTags, true);
+        assert.equal(s.sceneKey('/members/video/some-scene'), 'some-scene');
+        assert.equal(s.sceneKey('/members/video/some-scene/trailer'), 'some-scene');
+        assert.equal(s.sceneKey('https://' + host + '/video/some-scene'), 'some-scene');
+        assert.equal(s.sceneKey('https://www.' + host + '/members/video/some-scene'), 'some-scene');
+        assert.equal(s.sceneKey('https://other-site.example/video/some-scene'), null, 'another site of the network is not this scene');
+        assert.equal(s.modelKey('/members/models/jane-doe'), 'jane-doe');
+        assert.equal(s.modelKey('https://' + host + '/models/jane-doe'), 'jane-doe');
+        assert.equal(s.modelKey('https://' + host + '/girls/jane-doe'), 'jane-doe');
+        assert.equal(s.modelUrl('https://' + host, 'jane-doe', '/members/models/jane-doe'), 'https://' + host + '/models/jane-doe', 'added performer URLs are tour URLs');
+        assert.ok(s.detail.test('/members/models/jane-doe') && !s.detail.test('/members/video/some-scene'));
+        assert.ok(s.scenePage.test('/members/video/some-scene') && s.scenePage.test('/members/video/some-scene/trailer'));
+        assert.equal(s.nameFromUrl('/members/models/jane-doe'), 'jane doe');
+        assert.equal(s.sceneTitleFromUrl('/members/video/some-scene/trailer'), 'some scene');
+        assert.deepEqual(s.sceneUrlParts, [host + '/']);
+        assert.ok(s.performerUrlRe.test('https://' + host + '/girls/jane-doe') && !s.performerUrlRe.test('https://x' + host + '/models/jane-doe'));
+    }
+});
+test('primal fetish: the newer slug without its id matches the older /updates/ URL of the same scene', () => {
+    const s = siteFor('primalfetishnetwork.com');
+    assert.equal(s.id, 'primalfetish');
+    assert.equal(s.sceneKey('/video/some-step-title-part-2-3371.html'), 'some-step-title-part-2');
+    assert.equal(s.sceneKey('https://primalfetishnetwork.com/updates/Some-Step-Title-Part-2.html'), 'some-step-title-part-2');
+    assert.equal(s.sceneKey('https://www.primalfetishnetwork.com/video/some-step-title-part-2-3371.html'), 'some-step-title-part-2');
+    assert.equal(s.sceneKey('/videos/'), null);
+    assert.equal(s.sceneKey('https://other.example/video/some-step-title-3371.html'), null);
+    assert.equal(s.modelKey('/models/jane-doe-325.html'), 'jane-doe-325');
+    assert.equal(s.modelUrl('https://primalfetishnetwork.com', 'jane-doe-325'), 'https://primalfetishnetwork.com/models/jane-doe-325.html');
+    assert.equal(s.nameFromUrl('/models/jane-doe-325.html'), 'jane doe');
+});
+test('profiles saved before an adapter was built in are ignored on its host; profiles saved since apply', () => {
+    const old = { v: 1, host: 'holed.com', model: { path: '^/members/models/[^/]+(?:/|$)', nameSel: 'p.text-white.text-xl', linkPrefix: '/members/models/', key: 'slug' } };
+    assert.equal(siteFor('holed.com', { 'holed.com': old }), siteFor('holed.com'), 'the 4.1.0 profile no longer replaces the built-in selectors');
+    const since = Object.assign({}, old, { script: '4.4.0' });
+    assert.equal(siteFor('holed.com', { 'holed.com': since }).headingSel, 'p.text-white.text-xl');
+    assert.equal(siteFor('holed.com', { 'holed.com': since }).sceneKey, siteFor('holed.com').sceneKey);
+    // Adapters without profileSince keep older profiles (DFXtra's from 4.0.0).
+    assert.equal(siteFor('members.dfxtra.com', { 'members.dfxtra.com': { v: 1, host: 'members.dfxtra.com', card: { titleSel: 'h2.X' } } }).videoTitleSel, 'h2.X');
+});
 const sampleProfile = () => ({
     v: 1, host: 'members.newsite.example',
     model: { path: '^/performer/\\d+/[^/]+(?:/|$)', nameSel: 'h1.ProfileName', linkPrefix: '/performer/', key: 'id' },
@@ -247,8 +301,8 @@ test('the video badge needs a known video page; card tags run on every built-in 
     assert.equal(r.sceneTitleSel, 'h1');
     assert.equal(r.cardTags, true);
     // (every video page needs a title element or a title from the URL; checked below)
-    assert.deepEqual(SITES.filter(s => s.scenePage).map(s => s.id), ['reptyle', 'adulttime', 'dfxtra', 'aylo']);
-    assert.deepEqual(SITES.filter(s => s.sceneTitleSel).map(s => s.id), ['reptyle'], 'title element known on Reptyle only; elsewhere the title comes from the URL until one is picked');
+    assert.deepEqual(SITES.filter(s => s.scenePage).map(s => s.id), ['reptyle', 'adulttime', 'dfxtra', 'aylo', 'holed', 'exotic4k', 'passionhd', 'povd', 'primalfetish']);
+    assert.deepEqual(SITES.filter(s => s.sceneTitleSel).map(s => s.id), ['reptyle', 'holed', 'exotic4k', 'passionhd', 'povd', 'primalfetish'], 'elsewhere the title comes from the URL until one is picked');
     for (const s of SITES) if (s.scenePage && !s.sceneTitleSel) assert.equal(typeof s.sceneTitleFromUrl, 'function', s.id + ' needs a title source');
     const at = siteFor('members.adulttime.com');
     assert.ok(at.scenePage.test('/en/video/mommysboy/Be-Polite-To-Our-Guest-Young-Man/209586'));
@@ -256,7 +310,7 @@ test('the video badge needs a known video page; card tags run on every built-in 
     assert.equal(gammaTitleFromUrl('/en/video/mommysboy/Be-Polite-To-Our-Guest-Young-Man/209586'), 'Be Polite To Our Guest Young Man');
     assert.equal(gammaTitleFromUrl('https://www.evilangel.com/en/video/Anally-Talented-03/67506'), 'Anally Talented 03');
     assert.equal(gammaTitleFromUrl('/en/video/Room-101-Part-2'), '');
-    assert.deepEqual(SITES.filter(s => s.cardTags).map(s => s.id), ['reptyle', 'adulttime', 'dfxtra', 'aylo'], 'card titles are known on every built-in site');
+    assert.deepEqual(SITES.filter(s => s.cardTags).map(s => s.id), SITES.map(s => s.id), 'card titles are known on every built-in site');
 });
 test('ids come from movie and model links only', () => {
     assert.equal(extractMovieId('https://app.reptyle.com/movies/32219?r=x'), '32219');

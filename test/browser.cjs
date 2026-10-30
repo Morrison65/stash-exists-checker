@@ -58,7 +58,7 @@ window.GM_xmlhttpRequest = function (o) {
   else if (/performer_filter:\\{url/.test(q)) { __log.push('byurl:' + v.u); const ps = PERFS.filter(p => p.urls.some(u => u.includes(v.u))); data = { findPerformers: { performers: JSON.parse(JSON.stringify(ps)) } }; }
   else if (/findPerformers\\(filter:\\{q:/.test(q)) { const n = v.q.toLowerCase(); const ps = PERFS.filter(p => [p.name].concat(p.alias_list).some(x => x.toLowerCase().includes(n))); data = { findPerformers: { count: ps.length, performers: JSON.parse(JSON.stringify(ps)) } }; }
   else if (/findPerformers/.test(q)) { __log.push('perfs:' + v.p); data = { findPerformers: { count: PERFS.length, performers: JSON.parse(JSON.stringify(PERFS)) } }; }
-  else if (/url:\\{value:\\$h/.test(q)) { __log.push('scenes:' + v.h + ':' + v.p); data = { findScenes: { scenes: v.h === 'newsite.example' ? SCENES.filter(s => s.urls.some(u => u.includes(v.h))) : v.m === 'MATCHES_REGEX' && /bangbros/.test(v.h) ? [{ id: '70', title: 'BZ Cross', urls: ['https://bangbros.com/video/9001/bz-cross'] }] : v.h === '/en/video/' ? [{ id: '60', title: 'Cross Site', urls: ['https://www.evilangel.com/en/video/evilangel/Cross-Site/209586'] }] : [{ id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }] } }; }
+  else if (/url:\\{value:\\$h/.test(q)) { __log.push('scenes:' + v.h + ':' + v.p); data = { findScenes: { scenes: v.h === 'holed.com/' ? [{ id: '80', title: 'Stash Title Differs', urls: ['https://holed.com/video/some-scene'] }] : v.h === 'primalfetishnetwork.com/' ? [{ id: '81', title: 'Old Primal Title', urls: ['https://primalfetishnetwork.com/updates/Some-Primal-Scene.html'] }] : v.h === 'newsite.example' ? SCENES.filter(s => s.urls.some(u => u.includes(v.h))) : v.m === 'MATCHES_REGEX' && /bangbros/.test(v.h) ? [{ id: '70', title: 'BZ Cross', urls: ['https://bangbros.com/video/9001/bz-cross'] }] : v.h === '/en/video/' ? [{ id: '60', title: 'Cross Site', urls: ['https://www.evilangel.com/en/video/evilangel/Cross-Site/209586'] }] : [{ id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }] } }; }
   else if (/performers:\\{value:\\[217\\]/.test(q)) data = { findScenes: { count: 1, scenes: [{ id: '61', title: 'Title Match AT', urls: [] }] } };
   else if (/performers:\\{value/.test(q)) data = { findScenes: { count: 1, scenes: [{ id: '51', title: 'Hit By Title', urls: [] }] } };
   else if (/scene_filter:\\$sf/.test(q) && v.sf.title) { __log.push('lookup:t:' + v.sf.title.value); const ss = SCENES.filter(s => s.title.toLowerCase() === v.sf.title.value.toLowerCase()); data = { findScenes: { count: ss.length, scenes: ss } }; }
@@ -87,6 +87,22 @@ function bzPage(p, search) {
   else body = `<h1>Scenes</h1>${bzGrid(2717, 'kenzie-reeves')}`;
   return `<!doctype html><html><head><title>Brazzers</title></head><body><div id="root">${body}</div><script>${stub()}</script><script>${source}</script></body></html>`;
 }
+// Members area of the Nuxt platform (markup shape from the onboarding logs: Tailwind classes, card grid, the video
+// heading links the current page, tabs below a video).
+const nxCard = (slug, t) => `<div class="relative w-full flex flex-col gap-1"><div class="w-full flex flex-col gap-1"><a href="/members/video/${slug}"><img></a><div class="w-full flex flex-row items-stretch gap-2 p-1 pb-4"><div class="w-full flex flex-row justify-between"><div class="w-full flex flex-col"><a class="text-white leading-tight text-xl cursor-pointer" href="/members/video/${slug}"><strong>${t}</strong></a></div></div></div><a class="inline text-lg text-white" href="/members/models/jane-doe">Jane Doe</a></div></div>`;
+const nxGrid = `<div class="card-grid">${nxCard('some-scene', 'Some Scene!')}${nxCard('hit-by-title', 'Hit By Title')}${nxCard('nothing-here-at-all', 'Nothing Here At All')}</div>`;
+function nxPage(p) {
+  let body;
+  if (p.startsWith('/members/models/')) body = `<div class="w-full max-w-7xl flex flex-col"><div class="actor-image w-full h-96 relative bg-cover"><div class="absolute inset-3 flex flex-row"><div class="w-full leading-snug"><p class="text-white text-xl font-bold">Jane Doe</p><p class="text-white">3 videos</p></div></div></div></div>${nxGrid}`;
+  else if (p === '/members/video/no-heading-here') body = nxGrid;
+  else body = `<div class="w-full max-w-7xl flex flex-col gap-2"><div class="flex flex-row items-center gap-3"><div><h3 class="leading-tight text-xl"><a aria-current="page" class="router-link-active router-link-exact-active text-white" href="${p}">Some Scene!</a></h3><p><span><a class="inline text-lg text-white" href="/members/models/jane-doe">Jane Doe</a></span></p></div></div><a href="${p}/trailer">Trailer</a><a href="${p}/pictures">Pictures</a></div>${nxGrid}`;
+  return `<!doctype html><html><head><title>Members Area</title></head><body><div id="__nuxt"><nav><a href="/members/models">Models</a></nav>${body}</div><script>${stub()}</script><script>${source}</script></body></html>`;
+}
+// Primal Fetish Network: BEM classes, /video/<slug>-<id>.html; Stash holds the older /updates/ URL of the first scene.
+const pfCard = (slug, t) => `<div class="main__videoElement item-col"><a href="/video/${slug}.html"><img></a><div class="main__info"><div class="main__data"><a class="main__videoTitle" href="https://primalfetishnetwork.com/video/${slug}.html"> ${t} </a><div class="main__models"><a class="video__listModel" href="/models/jane-doe-325.html"><span class="sub-label">Jane Doe</span></a></div></div></div></div>`;
+function pfPage() {
+  return `<!doctype html><html><head><title>Primal</title></head><body><main class="performer"><div class="performer__container"><div class="performer__infoWrapper"><h1 class="performer__name">Jane Doe</h1></div></div></main><div class="videos"><div class="videos__container"><div class="videos__videoList">${pfCard('some-primal-scene-3585', 'Jane Doe - Some Primal Scene')}${pfCard('nothing-primal-here-12', 'Nothing Primal Here')}</div></div></div><script>${stub()}</script><script>${source}</script></body></html>`;
+}
 // A site the script does not know: two h1s (logo and performer name), cards whose title sits beside the links, and a
 // click handler that must never see a pick.
 const NS = 'members.newsite.example';
@@ -100,6 +116,8 @@ function page(p, host, search) {
   if (host === 'site-ma.brazzers.com') return bzPage(p, search);
   if (host === 'members.adulttime.com') return atPage(p);
   if (host === NS) return nsPage(p);
+  if (host === 'holed.com') return nxPage(p);
+  if (host === 'primalfetishnetwork.com') return pfPage(p);
   let body;
   if (p === '/models') body = `<h1>Models</h1>${model(1, 'Jane Doe')}${model(2, 'Alias Girl')}${model(3, 'Nobody Here')}`;
   else if (p === '/models/2') body = `<div class="model-name-container"><h2>Alias Girl</h2></div>`;
@@ -125,7 +143,7 @@ async function connect(url) {
     pg = await connect(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
     pg.on('Fetch.requestPaused', async ev => {
       const u = new URL(ev.request.url);
-      if (!['app.reptyle.com', 'members.adulttime.com', 'site-ma.brazzers.com', NS].includes(u.hostname) || /\.(png|ico)$/.test(u.pathname)) return pg.send('Fetch.failRequest', { requestId: ev.requestId, errorReason: 'BlockedByClient' });
+      if (!['app.reptyle.com', 'members.adulttime.com', 'site-ma.brazzers.com', 'holed.com', 'primalfetishnetwork.com', NS].includes(u.hostname) || /\.(png|ico)$/.test(u.pathname)) return pg.send('Fetch.failRequest', { requestId: ev.requestId, errorReason: 'BlockedByClient' });
       pg.send('Fetch.fulfillRequest', { requestId: ev.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'text/html; charset=utf-8' }], body: Buffer.from(page(u.pathname, u.hostname, u.search)).toString('base64') });
     });
     await pg.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
@@ -392,6 +410,41 @@ async function connect(url) {
     assert.equal(await ev('document.querySelectorAll(".stash-model-link-model-add").length'), 1);
     assert.equal(await ev('document.querySelector(".stash-model-link-model-add").parentElement.innerText.includes("Nia Nacci")'), true);
     assert.equal(await ev('[...document.querySelectorAll(".stash-model-link-model-badge")].every(b=>b.parentElement.classList.contains("css-c"))'), true);
+
+    // Nuxt members area (built in since 4.4.0). A profile saved by 4.1.0 with Tailwind selectors and no card tags is ignored.
+    gmStore['profiles:v1'] = { 'holed.com': { v: 1, host: 'holed.com', model: { path: '^/members/models/[^/]+(?:/|$)', nameSel: 'p.text-white.text-xl', linkPrefix: '/members/models/', key: 'slug' }, card: { linkPrefix: '/members/video/', titleSel: 'strong', key: 'slug' } } };
+    await go('/members/models/jane-doe', 'holed.com');
+    await wait(panel + '.includes("Videos on this page in Stash")');
+    assert.match(await ev(panel), /Found in Stash: Jane Doe \(id 7\)/);
+    await wait('(window.__sent || []).some(e => e.event === "started" && e.data.site === "holed")');
+    const nxCards = '[...document.querySelectorAll(".card-grid > div")].map(c=>c.querySelector(".stash-model-link-video-badge") ? "badge" : c.querySelector(".stash-exists-tag")?.getAttribute("data-stash-via") || "")';
+    // Members links match the tour URL Stash holds (/video/<slug>), the performer's scenes by title; tags sit on the
+    // card-grid cards.
+    await wait(nxCards + '.join("|")==="badge|badge|none"');
+    assert.equal(await ev('document.querySelector(".stash-model-link-video-badge").getAttribute("data-sml-key")'), '80');
+    // The performer URL added is the tour URL, not the members-area page.
+    await ev('[...document.querySelectorAll("#stash-model-link-panel button")].find(b=>b.textContent.startsWith("Add this URL")).click()');
+    await wait('__log.some(x=>x.startsWith("update:") && x.includes("holed.com"))');
+    assert.ok(await ev('__log.some(x=>x==="update:"+JSON.stringify({id:"7",urls:["https://holed.com/models/jane-doe"]}))'));
+    await stored('cache:v1:performers', v => v === null);
+    // Video page: the badge goes after the heading link to the current page; tabs below the video are this video.
+    await go('/members/video/some-scene', 'holed.com');
+    await wait(badgeText + '==="In Stash #80 (url)"');
+    assert.equal(await ev('document.getElementById("stash-exists-badge").previousElementSibling.getAttribute("aria-current")'), 'page');
+    assert.equal(await ev('[...document.querySelectorAll("[data-stash-queued]")].some(c => c.dataset.stashQueued === "trailer" || c.dataset.stashQueued === "pictures")'), false);
+    // Without the heading the title comes from the URL and the badge floats in the dock.
+    await go('/members/video/no-heading-here', 'holed.com');
+    await wait(badgeText + '.startsWith("Not in Stash")');
+    assert.equal(await ev('document.getElementById("stash-exists-badge").parentElement.id'), 'userscript-dock');
+    assert.ok(await ev('__log.includes("lookup:t:no heading here")'));
+    await stored('cache:v1:performers', v => !!v);
+    // Primal Fetish Network: the card's /video/<slug>-<id>.html matches the older /updates/<Title>.html URL in Stash.
+    await go('/models/jane-doe-325.html', 'primalfetishnetwork.com');
+    await wait(panel + '.includes("Videos on this page in Stash")');
+    const pfCards = '[...document.querySelectorAll(".main__videoElement")].map(c=>c.querySelector(".stash-model-link-video-badge") ? "badge" : c.querySelector(".stash-exists-tag")?.getAttribute("data-stash-via") || "")';
+    await wait(pfCards + '.join("|")==="badge|none"');
+    assert.equal(await ev('document.querySelector(".stash-model-link-video-badge").getAttribute("data-sml-key")'), '81');
+    delete gmStore['profiles:v1'];
 
     // Unknown site: the script runs but stays inert (no Stash request, no log entry, nothing drawn) and only offers the
     // setup guide in the Tampermonkey menu.

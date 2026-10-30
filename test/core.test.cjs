@@ -106,6 +106,45 @@ test('profile keys read the site links and the tour URLs Stash holds alike', () 
     assert.equal(registrableDomain('members.example.com'), 'example.com');
     assert.equal(registrableDomain('a.b.example.co.uk'), 'example.co.uk');
 });
+// Members areas link /members/video/<slug> while Stash holds the tour URL /video/<slug> on the same host.
+const membersProfile = () => ({
+    v: 1, host: 'members-site.example',
+    model: { path: '^/members/models/[^/]+(?:/|$)', nameSel: 'p.name', linkPrefix: '/members/models/', key: 'slug', sample: { page: '/members/models/jane-doe', name: 'Jane Doe' } },
+    card: { linkPrefix: '/members/video/', titleSel: 'strong', key: 'slug' },
+    video: { path: '^/members/video/[^/]+(?:/|$)', titleSel: 'h3 a', linkPrefix: '/members/video/', key: 'slug', sample: { page: '/members/video/some-scene', title: 'Some Scene' } },
+    // A performer name picked on a video page as "model list" (4.1.0 saved these).
+    listing: { path: '^/members/video/some-scene/?$', nameSel: 'a.inline', linkPrefix: '/members/models/', key: 'slug', sample: { page: '/members/video/some-scene', link: '/members/models/jane-doe', name: 'Jane Doe' } },
+    tags: true
+});
+test('members-area prefixes also key the tour URLs Stash holds on the same host', () => {
+    const s = profileSite(membersProfile(), null);
+    assert.equal(s.sceneKey('/members/video/some-scene'), 'some-scene');
+    assert.equal(s.sceneKey('https://members-site.example/video/some-scene'), 'some-scene');
+    assert.equal(s.modelKey('https://members-site.example/models/jane-doe'), 'jane-doe');
+    assert.equal(s.sceneKey('https://members-site.example/models/jane-doe'), null, 'a tour model URL is no scene');
+    assert.equal(s.modelKey('https://members-site.example/video/some-scene'), null);
+    assert.equal(s.sceneKey('/members/'), null);
+});
+test('a slug is the segment right after the prefix, not a tab below the video', () => {
+    const s = profileSite(membersProfile(), null);
+    assert.equal(s.sceneKey('/members/video/some-scene/trailer'), 'some-scene');
+    assert.equal(s.sceneKey('/members/video/some-scene/pictures'), 'some-scene');
+    assert.equal(s.sceneKey('https://members-site.example/video/some-scene/'), 'some-scene');
+});
+test('performer names picked on a video page are performer links, not a model list', () => {
+    const s = profileSite(membersProfile(), null);
+    assert.ok(!s.listing.test('/members/video/some-scene'), 'a video page is never a model list');
+    assert.equal(s.modelNameSel, '');
+    assert.equal(s.modelLinkSel, 'a[href*="/members/models/"]');
+    // A page of videos (/videos/) is no model list either, with or without a video pick.
+    const videos = profileSite({ v: 1, host: 'www.example.com', listing: { path: '^/videos/?$', nameSel: 'span.sub-label', linkPrefix: '/models/', key: 'slug', sample: { page: '/videos/', link: '/models/jane-doe-1.html', name: 'Jane' } } }, null);
+    assert.equal(videos.listing.test('/videos/'), false);
+    assert.equal(videos.modelLinkSel, 'a[href*="/models/"]');
+    // A real model list stays one.
+    const models = profileSite({ v: 1, host: 'www.example.com', listing: { path: '^/models/?$', nameSel: 'span.n', linkPrefix: '/models/', key: 'slug', sample: { page: '/models/', link: '/models/jane', name: 'Jane' } } }, null);
+    assert.ok(models.listing.test('/models/'));
+    assert.equal(models.modelNameSel, 'span.n');
+});
 const sampleProfile = () => ({
     v: 1, host: 'members.newsite.example',
     model: { path: '^/performer/\\d+/[^/]+(?:/|$)', nameSel: 'h1.ProfileName', linkPrefix: '/performer/', key: 'id' },

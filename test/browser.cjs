@@ -82,6 +82,8 @@ function bzPage(p, search) {
   if (p === '/models') body = `<h1>Models</h1><div class="css-g"><div class="css-c"><a href="/model/2717/kenzie-reeves"><img></a><a href="/model/2717/kenzie-reeves">Kenzie Reeves</a></div><div class="css-c"><a href="/model/65308/nia-nacci"><img></a><a href="/model/65308/nia-nacci">Nia Nacci</a></div><div class="css-c"><a href="/model/1/nobody-here"><img></a><a href="/model/1/nobody-here">Nobody</a></div></div>`;
   else if (p.startsWith('/model/')) body = `<h1>Kenzie Reeves</h1>${bzGrid(2717, 'kenzie-reeves')}`;
   else if (/models=65308/.test(search)) body = `<h1>Scenes</h1><div id="late"></div><script>setTimeout(function () { document.getElementById('late').innerHTML = ${JSON.stringify(bzGrid(65308, 'nia-nacci'))}; }, 1500);</script>`;
+  // Scene pages link the previous and next scene side by side in one element: no card around either.
+  else if (p.startsWith('/scene/')) body = `<h1>Scenes</h1>${bzGrid(2717, 'kenzie-reeves')}<nav class="sib"><a href="/scene/9004/prev-scene-here">Prev Scene Here</a><a href="/scene/9005/next-scene-here">Next Scene Here</a></nav>`;
   else body = `<h1>Scenes</h1>${bzGrid(2717, 'kenzie-reeves')}`;
   return `<!doctype html><html><head><title>Brazzers</title></head><body><div id="root">${body}</div><script>${stub()}</script><script>${source}</script></body></html>`;
 }
@@ -372,6 +374,12 @@ async function connect(url) {
     await go('/scene/9003/not-in-stash-bz', 'site-ma.brazzers.com');
     await wait(badgeText + '.startsWith("Not in Stash")');
     assert.ok(await ev('__log.includes("lookup:t:not in stash bz") && __log.includes("lookup:p:\\"not%in%stash%bz\\"")'));
+    // Two scene links in one element are no card: they get no tag and are not re-queued on every pass (4.1.0 flipped
+    // the element between both scenes once a second for as long as the tab was open).
+    await ev('window.__flips = 0; new MutationObserver(r => { window.__flips += r.length; }).observe(document.querySelector("nav.sib"), { attributes: true, attributeFilter: ["data-stash-queued"] })');
+    await pause(3500);
+    assert.equal(await ev('window.__flips'), 0);
+    assert.equal(await ev('document.querySelectorAll("nav.sib .stash-exists-tag").length'), 0);
 
     // Model listing: names from the URL, structural cards, + URL only where the URL is missing.
     await stored('cache:v1:performers', v => !!v); // stored again by the plain listing after the last write

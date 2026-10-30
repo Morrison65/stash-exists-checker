@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stash Exists Checker - Reptyle
 // @namespace    local.stash-exists-checker
-// @version      4.2.0
+// @version      4.3.0
 // @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, the Gamma members sites Adult Time and DFXtra, the Aylo network (Brazzers, BangBros, Reality Kings, ...); any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
 // @match        *://*/*
 // @updateURL    https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
@@ -21,7 +21,7 @@
 
 (function () {
   'use strict';
-  const VERSION = '4.2.0';
+  const VERSION = '4.3.0';
   // One adapter per site or network: everything page-specific lives here, the core below is generic. Sites set up with the
   // picker are stored as JSON profiles and turned into the same adapter shape by profileSite (see "Site profiles" below).
   // hosts: page hosts the adapter runs on. detail/listing: model page paths.
@@ -229,24 +229,31 @@
     return '^' + escapeRe(prefix ? prefix.slice(0, -1) : '') + rest.map(function (s) { return '/' + (/^\d+$/.test(s) ? '\\d+' : '[^/]+'); }).join('') + '(?:/|$)';
   }
   function keyModeOf(path, prefix) { return pathSegments(String(path).slice(prefix ? prefix.length - 1 : 0)).some(function (s) { return /^\d+$/.test(s); }) ? 'id' : 'slug'; }
-  // Key of a link or a Stash URL: the last numeric path segment (id mode) or the last segment (slug mode). Links on the
-  // site itself must start with one of the prefixes (each with its own mode); URLs on other hosts (the tour URLs Stash
-  // holds) are keyed by path alone, in the first prefix's mode.
+  // The prefix and its tour forms: /members/video/ also matches /video/, the URL Stash holds for a members-area link.
+  function tourPrefixes(prefix) {
+    var segs = pathSegments(prefix), out = [prefix.toLowerCase()];
+    for (var i = 1; i < segs.length; i++) if (KIND_WORDS.test(segs[i])) out.push(('/' + segs.slice(i).join('/') + '/').toLowerCase());
+    return out;
+  }
+  // Key of a link or a Stash URL: the last numeric path segment (id mode) or a slug. Links on the site itself must start
+  // with one of the prefixes or their tour forms (each with its own mode), and their slug is the segment right after the
+  // prefix (/video/<slug>/trailer is that video); URLs on other hosts (the tour URLs Stash holds) are keyed by path
+  // alone, in the first prefix's mode, the slug being the last segment.
   function profileKeys(host, rules) {
-    rules = rules.filter(function (r) { return r && typeof r.prefix === 'string'; });
+    rules = rules.filter(function (r) { return r && typeof r.prefix === 'string'; }).map(function (r) { return { prefixes: r.prefix ? tourPrefixes(r.prefix) : [''], mode: r.mode }; });
     return function (href) {
       var u;
       try { u = new URL(String(href || ''), 'https://' + host); } catch (e) { return null; }
-      var path = u.pathname, mode = rules.length ? rules[0].mode : 'id';
+      var path = u.pathname, mode = rules.length ? rules[0].mode : 'id', prefixed = false;
       if (u.hostname.toLowerCase() === host && rules.length) {
-        var lower = path.toLowerCase(), rule = null;
-        for (var r = 0; r < rules.length && !rule; r++) if (!rules[r].prefix || lower.indexOf(rules[r].prefix.toLowerCase()) === 0) rule = rules[r];
-        if (!rule) return null;
-        path = path.slice(rule.prefix ? rule.prefix.length - 1 : 0);
-        mode = rule.mode;
+        var lower = path.toLowerCase(), hit = null;
+        for (var r = 0; r < rules.length && hit === null; r++) for (var p = 0; p < rules[r].prefixes.length && hit === null; p++) if (lower.indexOf(rules[r].prefixes[p]) === 0) { hit = rules[r].prefixes[p]; mode = rules[r].mode; }
+        if (hit === null) return null;
+        path = path.slice(hit ? hit.length - 1 : 0);
+        prefixed = !!hit;
       }
       var segs = pathSegments(path);
-      if (mode === 'slug') { var s = segs.length ? segs[segs.length - 1].toLowerCase().replace(/\.(?:html?|php|aspx?)$/, '') : ''; return s || null; }
+      if (mode === 'slug') { var s = segs.length ? segs[prefixed ? 0 : segs.length - 1].toLowerCase().replace(/\.(?:html?|php|aspx?)$/, '') : ''; return s || null; }
       for (var i = segs.length - 1; i >= 0; i--) if (/^\d+$/.test(segs[i])) return segs[i];
       return null;
     };
@@ -285,9 +292,27 @@
     if (p.stash && p.stash.sceneParts && !(Array.isArray(p.stash.sceneParts) && p.stash.sceneParts.every(function (s) { return typeof s === 'string' && s.trim(); }))) return 'stash.sceneParts must be a list of URL fragments';
     return '';
   }
+  // A video page or a page of videos (/videos/, /members/video/<slug>): the names on it are performer links of videos,
+  // never a model list. Known video page paths come from the video picks.
+  var VIDEO_WORDS = /^(?:videos?|scenes?|movies?|watch|v|clips?|updates?|trailers?|films?|episodes?)$/i;
+  function videoPageOf(page, videoPicks) {
+    if (videoPicks.some(function (x) { try { return x.path && new RegExp(x.path, 'i').test(page); } catch (e) { return false; } })) return true;
+    var segs = pathSegments(linkPrefixOf(page, ''));
+    return segs.length > 0 && VIDEO_WORDS.test(segs[segs.length - 1]);
+  }
+  // The page a listing example was picked on: its sample, else its literal path (^/a/b/?$).
+  function listingPageOf(x) {
+    if (x.sample && typeof x.sample.page === 'string') return x.sample.page;
+    var m = /^\^(\/[^()[\]*+?{}|$^]*?)\/\?\$$/.exec(String(x.path || ''));
+    return m ? m[1].replace(/\\(.)/g, '$1') || '/' : '';
+  }
   // Adapter from a profile; base is the built-in adapter of the same host, if any.
   function profileSite(p, base) {
     var M = examples(p.model), L = examples(p.listing), C = examples(p.card), V = examples(p.video), PL = examples(p.performerLink);
+    // Model lists picked on video pages (4.1.0 saved them so) count as performer links.
+    var onVideoPages = L.filter(function (x) { var pg = listingPageOf(x); return pg && videoPageOf(pg, V); });
+    L = L.filter(function (x) { return onVideoPages.indexOf(x) < 0; });
+    PL = PL.concat(onVideoPages);
     var get = function (list, field) { return list.map(function (x) { return x[field]; }); };
     var nameSel = joinSel(get(M, 'nameSel')), listNameSel = joinSel(get(L, 'nameSel')), titleSel = joinSel(get(C, 'titleSel'));
     var pageTitleSel = joinSel(get(V.filter(function (x) { return x.path; }), 'titleSel')), videoPath = joinPaths(get(V.filter(function (x) { return x.titleSel; }), 'path'));
@@ -854,7 +879,9 @@
       const key = site.sceneKey(a.getAttribute('href') || '');
       if (!key) return;
       const card = cardFor(a);
-      if (!card || card.dataset.stashQueued === key) return;
+      // Sibling links of two videos (previous/next) have no card of their own: tagging their shared parent flipped it
+      // between both videos on every pass, and each flip triggered the next pass.
+      if (!card || card.dataset.stashQueued === key || keyCount(card, site.videoLinkSel, site.sceneKey) > 1) return;
       // A single-page app reused the card for another video: its old tag goes, the new video is checked.
       if (card.dataset.stashQueued) { const old = card.querySelector('.stash-exists-tag'); if (old) old.remove(); }
       const title = site.videoTitleSel ? videoTitle(card.querySelector(site.videoTitleSel)) : (a.getAttribute('title') || videoTitle(a.querySelector('span')) || videoTitle(a)).trim();
@@ -1024,9 +1051,10 @@
     var videoPrefixes = keyRules(examples(draft && draft.card).concat(examples(draft && draft.video))).map(function (r) { return r.prefix; });
     var inVideoCard = Array.prototype.some.call(card.querySelectorAll('a[href]'), function (x) {
       var pth = new URL(x.href, location.href).pathname;
-      return x !== a && (videoPrefixes.some(function (vp) { return vp && pth.indexOf(vp) === 0; }) || /^\/(?:[a-z]{2}\/)?(?:videos?|scenes?|movies?|watch|clips?|updates?|films?|episodes?|trailers?)\/./i.test(pth));
+      return x !== a && (videoPrefixes.some(function (vp) { return vp && pth.indexOf(vp) === 0; }) || /^\/(?:[a-z_]{2,12}\/)?(?:videos?|scenes?|movies?|watch|clips?|updates?|films?|episodes?|trailers?)\/./i.test(pth));
     });
-    if (inVideoCard) return { convertedTo: 'performerLink', linkPrefix: prefix, key: key, sample: { page: page, link: u.pathname, name: text.slice(0, 80) } };
+    // Names on a video page or a page of videos are that video's performers, whichever was picked first.
+    if (inVideoCard || videoPageOf(page, examples(draft && draft.video))) return { convertedTo: 'performerLink', linkPrefix: prefix, key: key, sample: { page: page, link: u.pathname, name: text.slice(0, 80) } };
     return { path: '^' + escapeRe(page.replace(/\/+$/, '')) + '/?$', nameSel: rel, linkPrefix: prefix, key: key, sample: { page: page, link: u.pathname, name: text.slice(0, 80) } };
   }
   // How many entries of the picked kind this page links, by the derived prefix and key rule.

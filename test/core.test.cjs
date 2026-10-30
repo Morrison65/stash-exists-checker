@@ -190,6 +190,42 @@ test('primal fetish: the newer slug without its id matches the older /updates/ U
     assert.equal(s.modelUrl('https://primalfetishnetwork.com', 'jane-doe-325'), 'https://primalfetishnetwork.com/models/jane-doe-325.html');
     assert.equal(s.nameFromUrl('/models/jane-doe-325.html'), 'jane doe');
 });
+// URL shapes read from the local Stash library (performer and scene URLs of the onboarded sites), slugs replaced.
+test('every URL shape Stash holds for the Nuxt members areas keys like the members links', () => {
+    const s = siteFor('povd.com');
+    for (const u of ['https://povd.com/video/some-scene', 'https://povd.com/members/video/some-scene', 'https://www.povd.com/video/some-scene/']) assert.equal(s.sceneKey(u), 'some-scene', u);
+    // Performers: the tour /models/ URL and the older /girls/ one (it now redirects to the tour home).
+    for (const u of ['https://povd.com/models/jane-doe', 'https://povd.com/girls/jane-doe', 'https://povd.com/members/models/jane-doe']) assert.equal(s.modelKey(u), 'jane-doe', u);
+    // The same slug on another site of the network is another performer and another scene.
+    assert.equal(s.modelKey('https://holed.com/girls/jane-doe'), null);
+    assert.equal(s.sceneKey('https://holed.com/video/some-scene'), null);
+    assert.equal(s.sceneKey('https://povd.com/models/jane-doe'), null, 'a performer URL is no scene');
+    assert.equal(s.modelKey('https://povd.com/video/some-scene'), null, 'a scene URL is no performer');
+});
+test('every URL shape Stash holds for Primal Fetish Network; the two it cannot key are known', () => {
+    const s = siteFor('primalfetishnetwork.com');
+    const key = 'some-step-sister-title';
+    for (const u of [
+        'https://primalfetishnetwork.com/video/some-step-sister-title-54.html',
+        'https://www.primalfetishnetwork.com/video/some-step-sister-title-54.html',
+        'https://primalfetishnetwork.com/updates/Some-Step-Sister-Title.html',
+        'https://www.primalfetishnetwork.com/updates/Some-Step-Sister-Title.html'
+    ]) assert.equal(s.sceneKey(u), key, u);
+    // Seen once each in the library: a members-area scene URL and a performer URL saved as a scene URL. Neither is keyed
+    // (those scenes match by title); change this test when a rule for them is added.
+    assert.equal(s.sceneKey('https://www.primalfetishnetwork.com/members/scenes/some-step-sister-title'), null);
+    assert.equal(s.sceneKey('https://primalfetishnetwork.com/models/jane-doe-325.html'), null);
+    // Older slugs drop apostrophes differently ("step-mom-s" vs "Step-Moms"): no URL match, the title lookup answers.
+    assert.notEqual(s.sceneKey('/video/her-step-mom-s-car-3585.html'), s.sceneKey('https://primalfetishnetwork.com/updates/Her-Step-Moms-Car.html'));
+});
+test('profiles saved by 4.1.0 are ignored on all five onboarded hosts; versions compare as numbers', () => {
+    for (const host of ['holed.com', 'exotic4k.com', 'passion-hd.com', 'povd.com', 'primalfetishnetwork.com']) {
+        const old = { v: 1, host, card: { linkPrefix: '/x/', titleSel: 'strong', key: 'slug' }, updatedAt: '2026-10-28T15:42:46.455Z' };
+        assert.equal(siteFor(host, { [host]: old }), siteFor(host), host + ': a 4.1.0 profile (no script field) is ignored');
+        for (const script of ['4.3.0', '4.3.9']) assert.equal(siteFor(host, { [host]: Object.assign({}, old, { script }) }), siteFor(host), host + ' ' + script);
+        for (const script of ['4.4.0', '4.10.0', '5.0.0']) assert.equal(siteFor(host, { [host]: Object.assign({}, old, { script }) }).videoTitleSel, 'strong', host + ' ' + script + ' applies');
+    }
+});
 test('profiles saved before an adapter was built in are ignored on its host; profiles saved since apply', () => {
     const old = { v: 1, host: 'holed.com', model: { path: '^/members/models/[^/]+(?:/|$)', nameSel: 'p.text-white.text-xl', linkPrefix: '/members/models/', key: 'slug' } };
     assert.equal(siteFor('holed.com', { 'holed.com': old }), siteFor('holed.com'), 'the 4.1.0 profile no longer replaces the built-in selectors');

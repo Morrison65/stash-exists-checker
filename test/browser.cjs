@@ -38,7 +38,11 @@ const PERFS = [
   { id: '8', name: 'Real Name', alias_list: ['Alias Girl'], urls: ['https://app.reptyle.com/models/2'] },
   { id: '217', name: 'Kenzie Reeves', alias_list: ['Tiny Kenzie'], urls: ['https://site-ma.brazzers.com/model/2717/kenzie-reeves'] },
   { id: '300', name: 'Nia Nacci', alias_list: [], urls: [] },
-  { id: '125', name: 'Demi Hawks', alias_list: [], urls: Array.from({ length: 45 }, (_, i) => 'https://example.com/profile/demi-hawks-' + i) }
+  { id: '125', name: 'Demi Hawks', alias_list: [], urls: Array.from({ length: 45 }, (_, i) => 'https://example.com/profile/demi-hawks-' + i) },
+  // Nuxt members area: an older /girls/ URL (most such performer URLs in the library) under another name, so only the
+  // key can match, and a /models/ slug that the
+  // id lookup for "jane-doe" finds as a substring (Stash INCLUDES) but must not take.
+  { id: '401', name: 'Renamed In Stash', alias_list: [], urls: ['https://holed.com/girls/holed-girl', 'https://holed.com/models/jane-doe-two'] }
 ];
 // URLs added in Stash since the lists were read: a write must keep them.
 const LIVE_URLS = { '300': ['https://example.com/nia-live'] };
@@ -87,10 +91,11 @@ function bzPage(p, search) {
   else body = `<h1>Scenes</h1>${bzGrid(2717, 'kenzie-reeves')}`;
   return `<!doctype html><html><head><title>Brazzers</title></head><body><div id="root">${body}</div><script>${stub()}</script><script>${source}</script></body></html>`;
 }
-// Members area of the Nuxt platform (markup shape from the onboarding logs: Tailwind classes, card grid, the video
-// heading links the current page, tabs below a video).
-const nxCard = (slug, t) => `<div class="relative w-full flex flex-col gap-1"><div class="w-full flex flex-col gap-1"><a href="/members/video/${slug}"><img></a><div class="w-full flex flex-row items-stretch gap-2 p-1 pb-4"><div class="w-full flex flex-row justify-between"><div class="w-full flex flex-col"><a class="text-white leading-tight text-xl cursor-pointer" href="/members/video/${slug}"><strong>${t}</strong></a></div></div></div><a class="inline text-lg text-white" href="/members/models/jane-doe">Jane Doe</a></div></div>`;
-const nxGrid = `<div class="card-grid">${nxCard('some-scene', 'Some Scene!')}${nxCard('hit-by-title', 'Hit By Title')}${nxCard('nothing-here-at-all', 'Nothing Here At All')}</div>`;
+// Members area of the Nuxt platform (markup shape from the onboarding logs and a live public page: Tailwind classes,
+// Vue fragment comments and data-v attributes, one card per direct child of .card-grid, the video heading links the
+// current page, tabs below a video).
+const nxCard = (slug, t, model = 'jane-doe', name = 'Jane Doe') => `<!--[--><!----><div class="relative w-full flex flex-col gap-1" data-v-9a56089a><div class="w-full flex flex-col gap-1" data-v-9a56089a><div class="relative w-full" data-v-9a56089a><!----><div class="relative cursor-pointer w-full overflow-hidden" data-v-9a56089a><a href="/members/video/${slug}" data-v-9a56089a><img></a></div></div><div class="w-full flex flex-row items-stretch gap-2 p-1 pb-4" data-v-9a56089a><!----><div class="w-full flex flex-row justify-between" data-v-9a56089a><div class="w-full flex flex-col" data-v-9a56089a><a class="text-white leading-tight text-xl cursor-pointer" href="/members/video/${slug}" data-v-9a56089a><strong data-v-9a56089a>${t}</strong></a></div></div></div><a class="inline text-lg text-white" href="/members/models/${model}">${name}</a></div></div><!--]-->`;
+const nxGrid = `<div class="card-grid" data-v-0dbae6b8><!--[-->${nxCard('some-scene', 'Some Scene!')}${nxCard('hit-by-title', 'Hit By Title')}${nxCard('nothing-here-at-all', 'Nothing Here At All', 'holed-girl', 'Holed Girl')}<!--]--></div>`;
 function nxPage(p) {
   let body;
   if (p.startsWith('/members/models/')) body = `<div class="w-full max-w-7xl flex flex-col"><div class="actor-image w-full h-96 relative bg-cover"><div class="absolute inset-3 flex flex-row"><div class="w-full leading-snug"><p class="text-white text-xl font-bold">Jane Doe</p><p class="text-white">3 videos</p></div></div></div></div>${nxGrid}`;
@@ -171,7 +176,7 @@ async function connect(url) {
     assert.deepEqual(await ev('__log.filter(x=>x.startsWith("scenes:"))'), ['scenes:app.reptyle.com:1']);
     // Both bulk lists are stored for the next pages and sites.
     assert.ok(await ev('__log.includes("perfs:1")'));
-    assert.equal(gmStore['cache:v1:performers'].items.length, 5);
+    assert.equal(gmStore['cache:v1:performers'].items.length, 6);
     assert.equal(gmStore['cache:v1:scenes:app.reptyle.com'].items[0].id, '50');
     // Card tags: an id in the stored scene list answers at once, the other cards are looked up (title, URL, file name).
     // One corner, one tag: where the IN STASH badge is, no tag; never inside the title.
@@ -415,6 +420,9 @@ async function connect(url) {
     gmStore['profiles:v1'] = { 'holed.com': { v: 1, host: 'holed.com', model: { path: '^/members/models/[^/]+(?:/|$)', nameSel: 'p.text-white.text-xl', linkPrefix: '/members/models/', key: 'slug' }, card: { linkPrefix: '/members/video/', titleSel: 'strong', key: 'slug' } } };
     await go('/members/models/jane-doe', 'holed.com');
     await wait(panel + '.includes("Videos on this page in Stash")');
+    // The id lookup asked for holed.com/models/jane-doe and got performer 401 (jane-doe-two contains it): not taken,
+    // the name finds Jane Doe.
+    assert.ok(await ev('__log.includes("byurl:holed.com/models/jane-doe")'));
     assert.match(await ev(panel), /Found in Stash: Jane Doe \(id 7\)/);
     await wait('(window.__sent || []).some(e => e.event === "started" && e.data.site === "holed")');
     const nxCards = '[...document.querySelectorAll(".card-grid > div")].map(c=>c.querySelector(".stash-model-link-video-badge") ? "badge" : c.querySelector(".stash-exists-tag")?.getAttribute("data-stash-via") || "")';
@@ -422,6 +430,11 @@ async function connect(url) {
     // card-grid cards.
     await wait(nxCards + '.join("|")==="badge|badge|none"');
     assert.equal(await ev('document.querySelector(".stash-model-link-video-badge").getAttribute("data-sml-key")'), '80');
+    // Badges and tags sit on the grid's direct children (videoCardSel), not on an inner element found by structure.
+    assert.equal(await ev('[...document.querySelectorAll(".stash-model-link-video-badge, .stash-exists-tag")].every(b => b.parentElement.parentElement.classList.contains("card-grid"))'), true);
+    // The performer saved under an older /girls/ URL and another name is found by that key on the /members/models/ link.
+    await wait('!!document.querySelector("a[href=\\"/members/models/holed-girl\\"][data-sml-model=\\"401\\"]")');
+    assert.equal(await ev('document.querySelectorAll("a[href=\\"/members/models/jane-doe\\"][data-sml-model=\\"401\\"]").length'), 0);
     // The performer URL added is the tour URL, not the members-area page.
     await ev('[...document.querySelectorAll("#stash-model-link-panel button")].find(b=>b.textContent.startsWith("Add this URL")).click()');
     await wait('__log.some(x=>x.startsWith("update:") && x.includes("holed.com"))');
@@ -437,6 +450,13 @@ async function connect(url) {
     await wait(badgeText + '.startsWith("Not in Stash")');
     assert.equal(await ev('document.getElementById("stash-exists-badge").parentElement.id'), 'userscript-dock');
     assert.ok(await ev('__log.includes("lookup:t:no heading here")'));
+    // The guide on a host whose profile is superseded starts from an empty draft, not from the ignored 4.1.0 picks.
+    await ev('__menu["Stash: edit the setup of this site"]()');
+    await wait('!!document.getElementById("stash-exists-setup")');
+    await stored('setup:v1:holed.com', v => v && v.open && v.draft);
+    assert.deepEqual(gmStore['setup:v1:holed.com'].draft, { v: 1, host: 'holed.com' });
+    await ev('document.querySelector("#stash-exists-setup [data-setup=close]").click()');
+    await stored('setup:v1:holed.com', v => v && v.open === false);
     await stored('cache:v1:performers', v => !!v);
     // Primal Fetish Network: the card's /video/<slug>-<id>.html matches the older /updates/<Title>.html URL in Stash.
     await go('/models/jane-doe-325.html', 'primalfetishnetwork.com');

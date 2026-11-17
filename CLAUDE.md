@@ -24,7 +24,7 @@ Tampermonkey userscript for desktop Chrome that shows what is already in your lo
 - `npm run check` = `lint` + `test` + `test:browser` + `version-bump` (fails if the userscript differs from `origin/master` without a higher `@version`; installs auto-update from there). `lint` runs the Tampermonkey 5.5.1 ESLint worker from the Windows Chrome profile and fails if that extension version is not installed; it also asserts `@version` equals the runtime `VERSION`. `test:browser` needs desktop Chrome (`CHROME_PATH` overrides the path).
 - `npm run check:ci` = `lint:ci` + `test` + `version-bump` (needs `npm ci --prefix tools/lint-ci` once). `.github/workflows/ci.yml` runs it.
 - Single test file: `node --test test/core.test.cjs`.
-- Releasing: bump `@version`, `VERSION` and `package.json` together (currently 4.5.0), then follow AGENTS.md. Installed copies auto-update from the raw file on `master` (`@updateURL`/`@downloadURL`, asserted by a test), so every push that changes the script must raise `@version`, and a broken push reaches every install. Keep `@name`/`@namespace` unchanged so Tampermonkey updates the installed script instead of adding a second one.
+- Releasing: bump `@version`, `VERSION` and `package.json` together (currently 4.5.1), then follow AGENTS.md. Installed copies auto-update from the raw file on `master` (`@updateURL`/`@downloadURL`, asserted by a test), so every push that changes the script must raise `@version`, and a broken push reaches every install. Keep `@name`/`@namespace` unchanged so Tampermonkey updates the installed script instead of adding a second one.
 
 ## Architecture
 

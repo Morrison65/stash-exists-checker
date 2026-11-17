@@ -498,6 +498,14 @@ async function connect(url) {
     await ev('document.querySelector("#stash-exists-setup [data-setup=close]").click()');
     await stored('setup:v1:bsky.app', v => v && v.open === false);
     delete gmStore['setup:v1:bsky.app'];
+    // In-app navigation to another profile: the old panel goes while the title still names the previous profile, and the
+    // new one is drawn once the title and the new screen are there; the heading badge moves to the visible header.
+    await ev('history.pushState({}, "", "/profile/nia.example.social"); document.title = "@nia.example.social on Bluesky"');
+    await wait(panel + '===""');
+    await ev(`(() => { document.querySelectorAll("[data-testid=profileScreen]").forEach(s => s.style.display = "none"); const d = document.createElement("div"); d.innerHTML = ${JSON.stringify(bsScreen('nia.example.social', 'Nia Nacci', false))}; document.getElementById("root").append(d.firstChild); document.title = "(2) Nia Nacci (@nia.example.social) — Bluesky"; })()`);
+    await wait(panel + '.includes("Found in Stash: Nia Nacci (id 300)")');
+    await wait('document.getElementById("stash-model-link-heading-badge")?.parentElement.textContent.includes("Nia Nacci")');
+    assert.equal(await ev('document.getElementById("stash-model-link-heading-badge").closest("[data-testid=profileScreen]").style.display'), '');
     // While the title still names the previous profile, no panel is drawn (the name would be someone else's).
     await go('/profile/other.example.social', 'bsky.app');
     await pause(1500);

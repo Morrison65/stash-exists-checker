@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stash Exists Checker - Reptyle
 // @namespace    local.stash-exists-checker
-// @version      4.5.0
+// @version      4.5.1
 // @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, the Gamma members sites Adult Time and DFXtra, the Aylo network (Brazzers, BangBros, Reality Kings, ...), the Holed / Exotic4K / Passion HD / POVD members areas, Primal Fetish Network and Bluesky (performers only); any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
 // @match        *://*/*
 // @updateURL    https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
@@ -21,7 +21,7 @@
 
 (function () {
   'use strict';
-  const VERSION = '4.5.0';
+  const VERSION = '4.5.1';
   // One adapter per site or network: everything page-specific lives here, the core below is generic. Sites set up with the
   // picker are stored as JSON profiles and turned into the same adapter shape by profileSite (see "Site profiles" below).
   // hosts: page hosts the adapter runs on. detail/listing: model page paths.
@@ -172,7 +172,8 @@
   // the one in the URL (a did: URL cannot be checked), so a title still showing the previous profile gives ''. Emoji and
   // symbols are dropped for the Stash name search; a profile without a display name gives its handle.
   function blueskyNameFromTitle(title, path) {
-    title = String(title || '').trim();
+    // Signed in, an unread count may lead the title: "(3) <Name> (@<handle>) — Bluesky".
+    title = String(title || '').trim().replace(/^\(\d+\+?\)\s+/, '');
     var m = title.match(/^(.*?)\s*\(@([^()\s]+)\)\s*[—–-]\s*Bluesky$/) || title.match(/^()@([^()\s]+)\s*[—–-]\s*Bluesky$/);
     var h = blueskyHandle(path);
     if (!m || !h || (h.indexOf('did:') !== 0 && h !== m[2].toLowerCase())) return '';
@@ -860,7 +861,8 @@
     if (!name && !modelId) return;
     // Picked sites wait for the picked name element; there is no title or id fallback to guess from. Sites naming the
     // model from the document title wait until the title shows this model.
-    if ((site.strictName || site.nameFromTitle) && !name) return;
+    // The panel of the previous page goes meanwhile: with it in place the next pass would stop early and keep it.
+    if ((site.strictName || site.nameFromTitle) && !name) { removePanel(); resetHeading(); return; }
     if (name && (detailId || pid)) rememberModel(detailId || pid, name, pageUrl);
     if (name && detailId) rememberModel('name:' + normName(name), name, pageUrl);
     namelessPanel = !name;
@@ -1151,7 +1153,9 @@
   function firstMatchIs(root, sel, el) { try { return (root === document ? q(sel) : root.querySelector(sel)) === el; } catch (e) { return false; } }
   // Shortest selector whose first match in root is el: the element itself, then with up to five ancestors, else an
   // :nth-of-type path (exact but fragile, so only the last resort): from el upwards, it stops at the first ancestor with an
-  // id or test id, or as soon as the path alone finds el, so it stays short on deep React trees.
+  // id or test id that finds el, so it stays short on deep React trees. Without such an anchor it runs up to the body: a
+  // shorter unanchored path could find a wrong element on another page, a long one finds nothing (and derivePick refuses
+  // one too long to store).
   function selectorFor(el, root) {
     root = root || document;
     var sel = selectorPart(el), cur = el;
@@ -1170,7 +1174,6 @@
       var n = 1;
       for (var s = cur.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === cur.tagName) n++;
       path.unshift(cur.tagName.toLowerCase() + ':nth-of-type(' + n + ')');
-      if (!prefix && firstMatchIs(root, path.join(' > '), el)) return path.join(' > ');
     }
     return prefix + path.join(' > ');
   }

@@ -210,6 +210,8 @@ test('bluesky: the name comes from the title only while it shows the profile in 
     const p = '/profile/jane.example.social';
     assert.equal(n('Jane Doe💙 (@jane.example.social) — Bluesky', p), 'Jane Doe');
     assert.equal(n('Jane Doe (@Jane.Example.Social) — Bluesky', p), 'Jane Doe');
+    assert.equal(n('(3) Jane Doe (@jane.example.social) — Bluesky', p), 'Jane Doe', 'unread count when signed in');
+    assert.equal(n('(30+) Jane Doe (@jane.example.social) — Bluesky', p), 'Jane Doe');
     assert.equal(n('(@jane.example.social) — Bluesky', p), 'jane.example.social', 'no display name');
     assert.equal(n('@jane.example.social — Bluesky', p), 'jane.example.social');
     // After in-app navigation the title can still name the previous profile, and the first title is not the profile's.

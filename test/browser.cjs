@@ -108,6 +108,14 @@ const pfCard = (slug, t) => `<div class="main__videoElement item-col"><a href="/
 function pfPage() {
   return `<!doctype html><html><head><title>Primal</title></head><body><main class="performer"><div class="performer__container"><div class="performer__infoWrapper"><h1 class="performer__name">Jane Doe</h1></div></div></main><div class="videos"><div class="videos__container"><div class="videos__videoList">${pfCard('some-primal-scene-3585', 'Jane Doe - Some Primal Scene')}${pfCard('nothing-primal-here-12', 'Nothing Primal Here')}</div></div></div><script>${stub()}</script><script>${source}</script></body></html>`;
 }
+// Bluesky (React Native Web): atomic classes, test ids, the previous profile screen still mounted but hidden, author
+// links repeated per post (avatar, name, handle) and the post itself below the same /profile/ prefix, image CDN links.
+const bsPost = (h, n) => `<div data-testid="feedItem-by-${h}"><a href="/profile/${h}" aria-label="avatar"><img src="https://cdn.bsky.app/img/a.jpg"></a><a class="r-1udh08x" href="/profile/${h}">${n}</a><a href="/profile/${h}">@${h}</a><a href="/profile/${h}/post/3abc">· 3d</a><div data-testid="postText">Some post</div><a href="https://cdn.bsky.app/img/full.jpg"><img></a></div>`;
+const bsScreen = (h, n, hidden) => `<div data-testid="profileScreen" style="${hidden ? 'display:none' : ''}"><div class="css-g5y9jx"><div class="css-g5y9jx r-12vffkv"><div dir="auto" class="css-146c3p1" data-testid="profileHeaderDisplayName">${n} </div></div></div>${bsPost(h, n)}</div>`;
+function bsPage(p) {
+  // The title names the open profile; on /profile/other.example.social it still names the previous one.
+  return `<!doctype html><html><head><title>Jane Doe💙 (@jane.example.social) — Bluesky</title></head><body><div id="root">${bsScreen('old.example.social', 'Old Person', true)}${bsScreen(p.split('/')[2], 'Jane Doe💙', false)}</div><script>${stub()}</script><script>${source}</script></body></html>`;
+}
 // A site the script does not know: two h1s (logo and performer name), cards whose title sits beside the links, and a
 // click handler that must never see a pick.
 const NS = 'members.newsite.example';
@@ -123,6 +131,7 @@ function page(p, host, search) {
   if (host === NS) return nsPage(p);
   if (host === 'holed.com') return nxPage(p);
   if (host === 'primalfetishnetwork.com') return pfPage(p);
+  if (host === 'bsky.app') return bsPage(p);
   let body;
   if (p === '/models') body = `<h1>Models</h1>${model(1, 'Jane Doe')}${model(2, 'Alias Girl')}${model(3, 'Nobody Here')}`;
   else if (p === '/models/2') body = `<div class="model-name-container"><h2>Alias Girl</h2></div>`;
@@ -148,7 +157,7 @@ async function connect(url) {
     pg = await connect(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
     pg.on('Fetch.requestPaused', async ev => {
       const u = new URL(ev.request.url);
-      if (!['app.reptyle.com', 'members.adulttime.com', 'site-ma.brazzers.com', 'holed.com', 'primalfetishnetwork.com', NS].includes(u.hostname) || /\.(png|ico)$/.test(u.pathname)) return pg.send('Fetch.failRequest', { requestId: ev.requestId, errorReason: 'BlockedByClient' });
+      if (!['app.reptyle.com', 'members.adulttime.com', 'site-ma.brazzers.com', 'holed.com', 'primalfetishnetwork.com', 'bsky.app', NS].includes(u.hostname) || /\.(png|ico)$/.test(u.pathname)) return pg.send('Fetch.failRequest', { requestId: ev.requestId, errorReason: 'BlockedByClient' });
       pg.send('Fetch.fulfillRequest', { requestId: ev.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'text/html; charset=utf-8' }], body: Buffer.from(page(u.pathname, u.hostname, u.search)).toString('base64') });
     });
     await pg.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
@@ -465,6 +474,34 @@ async function connect(url) {
     await wait(pfCards + '.join("|")==="badge|none"');
     assert.equal(await ev('document.querySelector(".stash-model-link-video-badge").getAttribute("data-sml-key")'), '81');
     delete gmStore['profiles:v1'];
+    // Bluesky: performers only. The name comes from the title of the open profile, the heading badge goes on the visible
+    // header (not the hidden previous screen), the name link is marked and the post link below the same prefix is not.
+    await go('/profile/jane.example.social', 'bsky.app');
+    await wait(panel + '.includes("Found in Stash: Jane Doe (id 7)")');
+    assert.ok(await ev('__log.includes("byurl:bsky.app/profile/jane.example.social")'));
+    assert.deepEqual(await ev('__log.filter(x => x.startsWith("scenes:") || x.startsWith("lookup:"))'), []);
+    await wait('!!document.getElementById("stash-model-link-heading-badge")');
+    assert.equal(await ev('document.getElementById("stash-model-link-heading-badge").closest("[data-testid=profileScreen]").style.display'), '');
+    await wait('document.querySelectorAll("a[data-sml-model=\\"7\\"]").length===1');
+    assert.equal(await ev('document.querySelector("a[data-sml-model]").getAttribute("href")'), '/profile/jane.example.social');
+    assert.equal(await ev('!!document.querySelector("a[href*=\\"/post/\\"][data-sml-model]")'), false);
+    // The guide: the name pick is the test id, not an :nth-of-type path, although the hidden screen matches it first.
+    await ev('__menu["Stash: edit the setup of this site"]()');
+    await wait('!!document.getElementById("stash-exists-setup")');
+    await ev('(() => { document.querySelector("#stash-exists-setup [data-setup=pick-model]").click(); const e = document.querySelectorAll("[data-testid=profileHeaderDisplayName]")[1]; for (const t of ["mouseover", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]) e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })); })()');
+    await stored('setup:v1:bsky.app', v => v && v.draft && v.draft.model);
+    assert.equal(gmStore['setup:v1:bsky.app'].draft.model[0].nameSel, 'div[data-testid="profileHeaderDisplayName"]');
+    // A "video title" whose link is the performer page is refused on the spot.
+    await ev('(() => { document.querySelector("#stash-exists-setup [data-setup=pick-card]").click(); const e = document.querySelectorAll("[data-testid=postText]")[1]; for (const t of ["mouseover", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]) e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })); })()');
+    await wait('document.getElementById("stash-exists-setup").innerText.includes("links to a performer page")');
+    assert.equal(gmStore['setup:v1:bsky.app'].draft.card, undefined);
+    await ev('document.querySelector("#stash-exists-setup [data-setup=close]").click()');
+    await stored('setup:v1:bsky.app', v => v && v.open === false);
+    delete gmStore['setup:v1:bsky.app'];
+    // While the title still names the previous profile, no panel is drawn (the name would be someone else's).
+    await go('/profile/other.example.social', 'bsky.app');
+    await pause(1500);
+    assert.equal(await ev(panel), '');
 
     // Unknown site: the script runs but stays inert (no Stash request, no log entry, nothing drawn) and only offers the
     // setup guide in the Tampermonkey menu.

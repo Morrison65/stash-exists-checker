@@ -47,7 +47,7 @@ test('adapters are complete and ids are unique', () => {
         for (const f of selectors) assert.equal(typeof s[f], 'string', s.id + ' needs ' + f + ' (may be empty)');
         if (s.modelParam) assert.equal(typeof s.performerUrlParts, 'function', s.id + ' filters by model id but cannot look it up');
         assert.equal(typeof s.anchorSel, 'string', s.id + ' needs anchorSel (empty for a floating panel)');
-        assert.ok(s.anchorSel || s.nameFromUrl, s.id + ' needs an anchor or nameFromUrl to find the name');
+        assert.ok(s.anchorSel || s.nameFromUrl || s.nameFromTitle, s.id + ' needs an anchor, nameFromUrl or nameFromTitle to find the name');
     }
     assert.equal(new Set(SITES.map(s => s.id)).size, SITES.length);
 });
@@ -189,6 +189,48 @@ test('primal fetish: the newer slug without its id matches the older /updates/ U
     assert.equal(s.modelKey('/models/jane-doe-325.html'), 'jane-doe-325');
     assert.equal(s.modelUrl('https://primalfetishnetwork.com', 'jane-doe-325'), 'https://primalfetishnetwork.com/models/jane-doe-325.html');
     assert.equal(s.nameFromUrl('/models/jane-doe-325.html'), 'jane doe');
+});
+test('bluesky: performers only, keyed by the handle of a bare profile link', () => {
+    const s = siteFor('bsky.app');
+    assert.equal(s.id, 'bluesky');
+    // The only shape in the local library (11 performers): https://bsky.app/profile/<handle>.
+    for (const u of ['https://bsky.app/profile/jane.example.social', '/profile/jane.example.social', '/profile/Jane.Example.Social/', 'https://www.bsky.app/profile/jane.example.social']) assert.equal(s.modelKey(u), 'jane.example.social', u);
+    assert.equal(s.modelKey('/profile/did:plc:abc123'), 'did:plc:abc123');
+    // Posts, followers and other sites are no performer link: no mark on post timestamps.
+    for (const u of ['/profile/jane.example.social/post/3abc', '/profile/jane.example.social/followers', 'https://cdn.bsky.app/profile/jane.example.social', '/search?q=x', '/']) assert.equal(s.modelKey(u), null, u);
+    assert.ok(s.detail.test('/profile/jane.example.social') && !s.detail.test('/profile/jane.example.social/post/3abc'));
+    assert.deepEqual(s.sceneUrlParts, []);
+    assert.equal(s.cardTags, false);
+    assert.equal(s.sceneKey('/profile/jane.example.social/post/3abc'), null);
+    assert.equal(s.modelUrl('https://bsky.app', 'jane.example.social'), 'https://bsky.app/profile/jane.example.social');
+    assert.deepEqual(s.performerUrlParts('jane.example.social'), ['bsky.app/profile/jane.example.social']);
+});
+test('bluesky: the name comes from the title only while it shows the profile in the URL', () => {
+    const { blueskyNameFromTitle: n } = require('../stash-exists-checker.user.js');
+    const p = '/profile/jane.example.social';
+    assert.equal(n('Jane Doe💙 (@jane.example.social) — Bluesky', p), 'Jane Doe');
+    assert.equal(n('Jane Doe (@Jane.Example.Social) — Bluesky', p), 'Jane Doe');
+    assert.equal(n('(@jane.example.social) — Bluesky', p), 'jane.example.social', 'no display name');
+    assert.equal(n('@jane.example.social — Bluesky', p), 'jane.example.social');
+    // After in-app navigation the title can still name the previous profile, and the first title is not the profile's.
+    assert.equal(n('Old Person (@old.example.social) — Bluesky', p), '');
+    assert.equal(n('@jane.example.social on Bluesky', p), '');
+    assert.equal(n('Bluesky', p), '');
+    assert.equal(n('Jane Doe (@jane.example.social) — Bluesky', '/profile/did:plc:abc123'), 'Jane Doe');
+});
+test('setup picks: selectors too long to store and video rules that are performer rules are caught', () => {
+    const { selectorProblem, sameLinkRule, validProfile } = require('../stash-exists-checker.user.js');
+    // The 4.4.0 picks on Bluesky: :nth-of-type paths of about 400 characters, which saving rejected.
+    const long = 'body:nth-of-type(1) > ' + 'div:nth-of-type(1) > '.repeat(18) + 'div:nth-of-type(1)';
+    assert.ok(long.length > 300);
+    assert.equal(selectorProblem({ nameSel: long }), 'nameSel');
+    assert.equal(selectorProblem({ titleSel: 'h1', cardSel: '' }), '');
+    assert.match(validProfile({ host: 'bsky.app', model: [{ nameSel: long }] }), /nameSel is not a selector/);
+    const perf = { linkPrefix: '/profile/', key: 'slug' };
+    assert.ok(sameLinkRule(perf, { linkPrefix: '/profile/', key: 'slug', titleSel: '' }));
+    assert.ok(!sameLinkRule(perf, { linkPrefix: '/profile/', key: 'slug', slugAt: 3 }), 'a post three segments below is another rule');
+    assert.ok(!sameLinkRule(perf, { linkPrefix: '/video/', key: 'slug' }));
+    assert.ok(!sameLinkRule(perf, { linkPrefix: '/profile/', key: 'id' }));
 });
 // URL shapes read from the local Stash library (performer and scene URLs of the onboarded sites), slugs replaced.
 test('every URL shape Stash holds for the Nuxt members areas keys like the members links', () => {
@@ -346,7 +388,7 @@ test('the video badge needs a known video page; card tags run on every built-in 
     assert.equal(gammaTitleFromUrl('/en/video/mommysboy/Be-Polite-To-Our-Guest-Young-Man/209586'), 'Be Polite To Our Guest Young Man');
     assert.equal(gammaTitleFromUrl('https://www.evilangel.com/en/video/Anally-Talented-03/67506'), 'Anally Talented 03');
     assert.equal(gammaTitleFromUrl('/en/video/Room-101-Part-2'), '');
-    assert.deepEqual(SITES.filter(s => s.cardTags).map(s => s.id), SITES.map(s => s.id), 'card titles are known on every built-in site');
+    assert.deepEqual(SITES.filter(s => s.cardTags).map(s => s.id), SITES.filter(s => s.sceneUrlParts.length).map(s => s.id), 'card titles are known on every built-in site with videos');
 });
 test('ids come from movie and model links only', () => {
     assert.equal(extractMovieId('https://app.reptyle.com/movies/32219?r=x'), '32219');

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Stash Exists Checker - Reptyle
 // @namespace    local.stash-exists-checker
-// @version      4.4.0
-// @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, the Gamma members sites Adult Time and DFXtra, the Aylo network (Brazzers, BangBros, Reality Kings, ...), the Holed / Exotic4K / Passion HD / POVD members areas and Primal Fetish Network; any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
+// @version      4.5.0
+// @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, the Gamma members sites Adult Time and DFXtra, the Aylo network (Brazzers, BangBros, Reality Kings, ...), the Holed / Exotic4K / Passion HD / POVD members areas, Primal Fetish Network and Bluesky (performers only); any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
 // @match        *://*/*
 // @updateURL    https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
@@ -21,7 +21,7 @@
 
 (function () {
   'use strict';
-  const VERSION = '4.4.0';
+  const VERSION = '4.5.0';
   // One adapter per site or network: everything page-specific lives here, the core below is generic. Sites set up with the
   // picker are stored as JSON profiles and turned into the same adapter shape by profileSite (see "Site profiles" below).
   // hosts: page hosts the adapter runs on. detail/listing: model page paths.
@@ -130,7 +130,54 @@
     sceneTitleSel: 'h1.video__movieTitle',
     cardTags: true,
     profileSince: '4.4.0'
+  }, {
+    // Bluesky (onboarded with the guide in 4.4.0): no videos, performers only. Profiles are /profile/<handle> (or a
+    // did:plc: id); posts, followers and the like sit below the same prefix, so only a bare profile link is a key. Classes
+    // are React Native Web hashes and old screens stay mounted (hidden) after in-app navigation, so the name comes from the
+    // document title of the open profile. Added performer URLs are https://bsky.app/profile/<handle>.
+    id: 'bluesky',
+    hosts: ['bsky.app'],
+    detail: /^\/profile\/[^/]+\/?$/,
+    listing: /(?!)/,
+    headingSel: '[data-testid="profileHeaderDisplayName"]',
+    anchorSel: '',
+    headingFallbackSel: '[data-testid="profileHeaderDisplayName"]',
+    nameFromTitle: blueskyNameFromTitle,
+    videoCardSel: '',
+    videoLinkSel: 'a[data-stash-exists-none]',
+    modelLinkSel: 'a[href*="/profile/"]',
+    modelCardSel: '',
+    modelEntrySel: '',
+    modelNameSel: '',
+    sceneUrlParts: [],
+    sceneKey: function () { return null; },
+    modelKey: blueskyHandle,
+    modelUrl: function (origin, key) { return 'https://bsky.app/profile/' + key; },
+    performerUrlRe: /^https?:\/\/(?:www\.)?bsky\.app\//i,
+    performerUrlParts: function (key) { return ['bsky.app/profile/' + key]; },
+    cardTags: false,
+    profileSince: '4.5.0'
   }];
+  // Bluesky profile key: the handle (or did:) of a bare /profile/<handle> link, lowercase; deeper links are no key.
+  function blueskyHandle(href) {
+    var u;
+    try { u = new URL(String(href || ''), 'https://bsky.app'); } catch (e) { return null; }
+    var m = /^(?:www\.)?bsky\.app$/i.test(u.hostname) ? u.pathname.match(/^\/profile\/@?([^/?#]+)\/?$/i) : null;
+    if (!m) return null;
+    var h;
+    try { h = decodeURIComponent(m[1]); } catch (e) { h = m[1]; }
+    return h.toLowerCase() || null;
+  }
+  // The name in the title Bluesky gives an open profile, "<Name> (@<handle>) — Bluesky". It counts only when its handle is
+  // the one in the URL (a did: URL cannot be checked), so a title still showing the previous profile gives ''. Emoji and
+  // symbols are dropped for the Stash name search; a profile without a display name gives its handle.
+  function blueskyNameFromTitle(title, path) {
+    title = String(title || '').trim();
+    var m = title.match(/^(.*?)\s*\(@([^()\s]+)\)\s*[—–-]\s*Bluesky$/) || title.match(/^()@([^()\s]+)\s*[—–-]\s*Bluesky$/);
+    var h = blueskyHandle(path);
+    if (!m || !h || (h.indexOf('did:') !== 0 && h !== m[2].toLowerCase())) return '';
+    return m[1].replace(/[^\p{L}\p{N}\s.'’&-]+/gu, ' ').replace(/\s+/g, ' ').trim() || m[2];
+  }
   // The slug after /<kind>/ (or /members/<kind>/) on one domain, lowercase and without .html; other hosts give null.
   function hostSlug(domain, kinds) {
     var hostRe = new RegExp('^(?:www\\.)?' + escapeRe(domain) + '$', 'i'), pathRe = new RegExp('^/(?:members/)?(?:' + kinds + ')/([^/?#]+)', 'i');
@@ -285,6 +332,7 @@
   // Setup guide state lives up here: on other sites the script returns before any later var is assigned.
   var SETUP_ID = 'stash-exists-setup';
   var picking = null;
+  var TEST_ATTRS = ['data-testid', 'data-test-id', 'data-test', 'data-qa', 'data-cy'];
   var NEVER = /(?!)/;
   var NO_LINKS = 'a[data-stash-exists-none]';
   // Path words that name a kind of page; a link prefix runs up to the last of them (/en/video/, /en/pornstar/view/).
@@ -352,6 +400,16 @@
   function joinSel(list) { return unique(list).join(', '); }
   function joinPaths(list) { list = unique(list); return list.length ? new RegExp(list.length === 1 ? list[0] : list.map(function (x) { return '(?:' + x + ')'; }).join('|'), 'i') : null; }
   function keyRules(list) { var seen = {}; return list.filter(function (x) { if (!x || typeof x.linkPrefix !== 'string' || seen[x.linkPrefix]) return false; seen[x.linkPrefix] = 1; return true; }).map(function (x) { return { prefix: x.linkPrefix, mode: x.key || 'id', slugAt: x.slugAt }; }); }
+  var MAX_SEL = 300;
+  // The first selector field of a pick that is too long to store (validProfile rejects it), else ''.
+  function selectorProblem(part) {
+    var sels = ['nameSel', 'titleSel', 'cardSel'];
+    for (var i = 0; i < sels.length; i++) if (typeof part[sels[i]] === 'string' && part[sels[i]].length > MAX_SEL) return sels[i];
+    return '';
+  }
+  // Two picks key the same links: same prefix, key mode and slug depth (a video rule like this would read every performer
+  // link as a video).
+  function sameLinkRule(a, b) { return !!a && !!b && typeof a.linkPrefix === 'string' && a.linkPrefix === b.linkPrefix && (a.key || 'id') === (b.key || 'id') && (a.slugAt || 1) === (b.slugAt || 1); }
   // Returns '' for a usable profile, else what is wrong with it.
   function validProfile(p) {
     if (!p || typeof p !== 'object' || typeof p.host !== 'string' || !/^[a-z0-9.-]+$/i.test(p.host)) return 'host missing';
@@ -365,7 +423,7 @@
         if (typeof x !== 'object') return at + ' is not an object';
         if (x.path !== undefined) { try { new RegExp(x.path); } catch (err) { return at + '.path is not a regex'; } }
         var sels = ['nameSel', 'titleSel', 'cardSel'];
-        for (var j = 0; j < sels.length; j++) if (x[sels[j]] !== undefined && (typeof x[sels[j]] !== 'string' || x[sels[j]].length > 300)) return at + '.' + sels[j] + ' is not a selector';
+        for (var j = 0; j < sels.length; j++) if (x[sels[j]] !== undefined && (typeof x[sels[j]] !== 'string' || x[sels[j]].length > MAX_SEL)) return at + '.' + sels[j] + ' is not a selector';
         if (x.linkPrefix !== undefined && !/^(?:\/[^"\\]*\/)?$/.test(x.linkPrefix)) return at + '.linkPrefix must start and end with /';
         if (x.key !== undefined && x.key !== 'id' && x.key !== 'slug') return at + '.key must be id or slug';
         if (x.slugAt !== undefined && !(x.slugAt === Math.floor(x.slugAt) && x.slugAt >= 1 && x.slugAt <= 8)) return at + '.slugAt must be 1 to 8';
@@ -441,7 +499,7 @@
   const canonUrl = (u) => (u || '').split('?')[0].split('#')[0].trim();
   // Node unit tests load the pure helpers only (function declarations are hoisted); nothing else touches the page.
   if (typeof module === 'object' && module.exports) {
-    module.exports = { logPage: logPage, createLogSink: createLogSink, VERSION: VERSION, SITES: SITES, siteFor: siteFor, cachedList: cachedList, normUrl: normUrl, normTitle: normTitle, normName: normName, extractMovieId: extractMovieId, extractModelId: extractModelId, extractGammaSceneId: extractGammaSceneId, extractGammaActorId: extractGammaActorId, gammaNameFromUrl: gammaNameFromUrl, ayloId: ayloId, ayloNameFromUrl: ayloNameFromUrl, modelIdFromParam: modelIdFromParam, modelNameFromParam: modelNameFromParam, norm: norm, canonUrl: canonUrl, lookupVideo: lookupVideo, linkPrefixOf: linkPrefixOf, pathPatternOf: pathPatternOf, keyModeOf: keyModeOf, profileKey: profileKey, registrableDomain: registrableDomain, validProfile: validProfile, profileSite: profileSite, ayloTitleFromUrl: ayloTitleFromUrl, gammaTitleFromUrl: gammaTitleFromUrl };
+    module.exports = { logPage: logPage, createLogSink: createLogSink, VERSION: VERSION, SITES: SITES, siteFor: siteFor, cachedList: cachedList, normUrl: normUrl, normTitle: normTitle, normName: normName, extractMovieId: extractMovieId, extractModelId: extractModelId, extractGammaSceneId: extractGammaSceneId, extractGammaActorId: extractGammaActorId, gammaNameFromUrl: gammaNameFromUrl, ayloId: ayloId, ayloNameFromUrl: ayloNameFromUrl, modelIdFromParam: modelIdFromParam, modelNameFromParam: modelNameFromParam, norm: norm, canonUrl: canonUrl, lookupVideo: lookupVideo, linkPrefixOf: linkPrefixOf, pathPatternOf: pathPatternOf, keyModeOf: keyModeOf, profileKey: profileKey, registrableDomain: registrableDomain, validProfile: validProfile, profileSite: profileSite, ayloTitleFromUrl: ayloTitleFromUrl, gammaTitleFromUrl: gammaTitleFromUrl, blueskyHandle: blueskyHandle, blueskyNameFromTitle: blueskyNameFromTitle, selectorProblem: selectorProblem, sameLinkRule: sameLinkRule };
     return;
   }
   // Runs on every page. Other sites only get the setup guide in the Tampermonkey menu: no requests, no logs, no observer
@@ -527,13 +585,15 @@
   function modelIdFromParam(search, param) { if (!param) return null; var v; try { v = new URLSearchParams(search).get(param); } catch (e) { return null; } return v && /^\d+$/.test(v.trim()) ? v.trim() : null; }
   // The one model name a page is filtered to; a second value (...[1]) means several models.
   function modelNameFromParam(search, param) { if (!param) return null; var sp; try { sp = new URLSearchParams(search); } catch (e) { return null; } var v = (sp.get(param) || '').trim(); if (!v || sp.get(param.replace(/\[0\]$/, '[1]'))) return null; return v; }
-  function q(sel) { return sel ? document.querySelector(sel) : null; }
+  // The first rendered match: single-page apps (Bluesky) keep earlier screens mounted but hidden.
+  function q(sel) { if (!sel) return null; var all = document.querySelectorAll(sel); for (var i = 0; i < all.length; i++) if (all[i].getClientRects().length) return all[i]; return all[0] || null; }
   function getPageUrl() { return location.origin + location.pathname; }
   function headingEl() { return q(site.headingSel) || q(site.headingFallbackSel); }
   function headingText(h) { var c = h.cloneNode(true); var b = c.querySelector('#' + HEADING_BADGE_ID); if (b) b.remove(); return (c.textContent || '').trim(); }
   function getModelName() {
     var fromUrl = site.nameFromUrl ? site.nameFromUrl(location.pathname) : '';
     if (fromUrl) return fromUrl;
+    if (site.nameFromTitle) return site.nameFromTitle(document.title, location.pathname);
     var h = q(site.headingSel);
     if (site.strictName) return h ? headingText(h).replace(/\s+/g, ' ').slice(0, 80) : '';
     if (h && headingText(h)) return headingText(h);
@@ -798,8 +858,9 @@
     var pageUrl = pid ? ((known && known.url) || site.modelUrl(location.origin, pid, '/model/' + pid)) : pname ? ((known && known.url) || '') : detailId ? site.modelUrl(location.origin, detailId, location.pathname) : getPageUrl();
     var modelId = pid || detailId;
     if (!name && !modelId) return;
-    // Picked sites wait for the picked name element; there is no title or id fallback to guess from.
-    if (site.strictName && !name) return;
+    // Picked sites wait for the picked name element; there is no title or id fallback to guess from. Sites naming the
+    // model from the document title wait until the title shows this model.
+    if ((site.strictName || site.nameFromTitle) && !name) return;
     if (name && (detailId || pid)) rememberModel(detailId || pid, name, pageUrl);
     if (name && detailId) rememberModel('name:' + normName(name), name, pageUrl);
     namelessPanel = !name;
@@ -1048,8 +1109,8 @@
   function setupPicks() {
     return [
       { kind: 'model', label: 'Performer name', where: 'on a performer/model page', hint: 'Open a performer page, press Pick, then click the performer name.' },
-      { kind: 'card', label: 'Video title in a list', where: 'on a page that lists videos', hint: 'Open a page with video cards, press Pick, then click the title of one video.' },
-      { kind: 'video', label: 'Video page title', where: 'on a single video page', hint: 'Open one video, press Pick, then click its title.' },
+      { kind: 'card', label: 'Video title in a list', where: 'on a page that lists videos (skip on sites without videos)', hint: 'Open a page with video cards, press Pick, then click the title of one video.' },
+      { kind: 'video', label: 'Video page title', where: 'on a single video page (skip on sites without videos)', hint: 'Open one video, press Pick, then click its title.' },
       { kind: 'listing', label: 'Model name in a model list', where: 'on a page that lists only models (optional)', hint: 'Open the list of models (not a page that mixes videos and models), press Pick, then click the name of one model.' },
       { kind: 'performerLink', label: 'Performer link', where: 'on a video card or video page (optional)', hint: 'Press Pick, then click a performer name that links to the performer page (for example under a video title).' }
     ];
@@ -1062,23 +1123,35 @@
   function draftParts(d) { return d.stash && d.stash.sceneParts && d.stash.sceneParts.length ? d.stash.sceneParts : [registrableDomain(d.host)]; }
   function cssEsc(s) { return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, '\\$&'); }
   // Class names that look generated change with every build of a site, so they are skipped: css-1x2y, e1vusg2z1, sc-AbC12,
-  // CSS-module hashes (styles_MUaQmnAOb3, Title_title__3xYz1), state modifiers (Link--hover, is-active). Of the rest the two
-  // rarest on the page are used: "SceneThumb-SceneInfo-SceneTitle-Link" says more than "Link".
+  // CSS-module hashes (styles_MUaQmnAOb3, Title_title__3xYz1), React Native Web atoms (r-1udh08x), state modifiers
+  // (Link--hover, is-active). Of the rest the two rarest on the page are used: "SceneThumb-SceneInfo-SceneTitle-Link" says
+  // more than "Link".
   function stableClasses(el) {
     var cs = Array.prototype.filter.call(el.classList || [], function (c) {
       // A hash tail has a digit (Title_title__3xYz1); BEM names (performer__name, main__videoTitle) do not and are kept.
-      return /^[A-Za-z][\w-]{1,60}$/.test(c) && !/\d{3,}|^(?:css|sc|jsx|svelte|stash|styles?)[-_]|^[a-z]+[0-9][a-z0-9]{4,}$/i.test(c) &&
+      return /^[A-Za-z][\w-]{1,60}$/.test(c) && !/\d{3,}|^(?:css|sc|jsx|svelte|stash|styles?)[-_]|^[a-z]+[0-9][a-z0-9]{4,}$|^r-(?=[a-z]*\d)[a-z0-9]{5,9}$/i.test(c) &&
         !/__[A-Za-z]*\d[A-Za-z0-9]*$|_(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{5,}$/.test(c) && !/^(?:active|hover|focus|selected|open|is-|has-)|--(?:hover|active|focus|selected|open)$/i.test(c);
     });
     return cs.map(function (c) { return [c, document.getElementsByClassName(c).length]; }).sort(function (a, b) { return a[1] - b[1]; }).slice(0, 2).map(function (x) { return x[0]; });
   }
+  // A test id names the element's role and survives rebuilds (Bluesky: data-testid="profileHeaderDisplayName"); ids of one
+  // entry (profileCard-<handle>-link, item-12345) do not. TEST_ATTRS sits above the module guard.
+  function testIdPart(el) {
+    for (var i = 0; i < TEST_ATTRS.length; i++) {
+      var v = el.getAttribute && el.getAttribute(TEST_ATTRS[i]);
+      if (v && /^[A-Za-z][\w-]{1,60}$/.test(v) && !/\d{3,}/.test(v)) return '[' + TEST_ATTRS[i] + '="' + v + '"]';
+    }
+    return '';
+  }
   function selectorPart(el) {
     if (el.id && /^[A-Za-z][\w-]{0,40}$/.test(el.id) && !/\d{3,}/.test(el.id) && !/^stash-/.test(el.id)) return '#' + cssEsc(el.id);
-    return el.tagName.toLowerCase() + stableClasses(el).map(function (c) { return '.' + cssEsc(c); }).join('');
+    return el.tagName.toLowerCase() + (testIdPart(el) || stableClasses(el).map(function (c) { return '.' + cssEsc(c); }).join(''));
   }
-  function firstMatchIs(root, sel, el) { try { return root.querySelector(sel) === el; } catch (e) { return false; } }
+  // Page-level selectors are read with q (the first rendered match), card-level ones with querySelector.
+  function firstMatchIs(root, sel, el) { try { return (root === document ? q(sel) : root.querySelector(sel)) === el; } catch (e) { return false; } }
   // Shortest selector whose first match in root is el: the element itself, then with up to five ancestors, else an
-  // :nth-of-type path (exact but fragile, so only the last resort).
+  // :nth-of-type path (exact but fragile, so only the last resort): from el upwards, it stops at the first ancestor with an
+  // id or test id, or as soon as the path alone finds el, so it stays short on deep React trees.
   function selectorFor(el, root) {
     root = root || document;
     var sel = selectorPart(el), cur = el;
@@ -1088,13 +1161,18 @@
       if (!cur || cur === root || cur === document.documentElement) break;
       sel = selectorPart(cur) + ' ' + sel;
     }
-    var path = [];
+    var path = [], prefix = root === document ? '' : ':scope > ';
     for (cur = el; cur && cur !== root && cur !== document.documentElement; cur = cur.parentElement) {
+      if (cur !== el && path.length) {
+        var part = selectorPart(cur);
+        if (/^#|\[/.test(part) && firstMatchIs(root, part + ' > ' + path.join(' > '), el)) return part + ' > ' + path.join(' > ');
+      }
       var n = 1;
       for (var s = cur.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === cur.tagName) n++;
       path.unshift(cur.tagName.toLowerCase() + ':nth-of-type(' + n + ')');
+      if (!prefix && firstMatchIs(root, path.join(' > '), el)) return path.join(' > ');
     }
-    return (root === document ? '' : ':scope > ') + path.join(' > ');
+    return prefix + path.join(' > ');
   }
   function textOf(el) { return (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' '); }
   // What the log gets about a picked element: text, ancestor chain and markup, with query strings cut from every URL
@@ -1106,17 +1184,34 @@
     return { text: textOf(el).slice(0, 120), chain: chain, html: html.slice(0, 1500) };
   }
   // The link of a picked title or name: its own link, else a link in the smallest ancestor that has one (one with a
-  // numeric path segment first, since that is usually the video or model page).
+  // numeric path segment first, since that is usually the video or model page). Links to other hosts (image CDNs, as on
+  // Bluesky) only count when there is no link to this site.
   function linkNear(el) {
-    var own = el.closest('a[href]');
-    if (own) return own;
+    var own = el.closest('a[href]'), foreign = null;
+    var local = function (a) { try { return new URL(a.href, location.href).host === location.host; } catch (e) { return false; } };
+    if (own && local(own)) return own;
     for (var cur = el.parentElement, d = 0; cur && cur !== document.body && d < 6; cur = cur.parentElement, d++) {
       var ls = Array.prototype.filter.call(cur.querySelectorAll('a[href]'), function (a) { return pathSegments(new URL(a.href, location.href).pathname).length; });
+      foreign = foreign || ls[0] || null;
+      ls = ls.filter(local);
       if (ls.length) return ls.filter(function (a) { return /\/\d+(?:[/?#]|$)/.test(new URL(a.href, location.href).pathname); })[0] || ls[0];
     }
-    return null;
+    return own || foreign;
   }
+  // A pick is refused at once when it could never be saved (a selector over the stored limit) or when its links are the
+  // ones already picked for the other side (a "video title" that links to the performer page, as a post on Bluesky does).
   function derivePick(kind, el, draft) {
+    var part = derivePickRules(kind, el, draft);
+    if (part.error) return part;
+    var bad = selectorProblem(part);
+    if (bad) return { error: 'No short selector for that element (' + bad + ' would be ' + part[bad].length + ' characters); press ↑ to pick a parent, or pick the same thing on another entry.' };
+    var as = part.convertedTo || kind, videoSide = as === 'card', modelSide = as === 'listing' || as === 'performerLink';
+    var other = videoSide ? ['model', 'listing', 'performerLink'] : modelSide || as === 'model' ? ['card'] : [];
+    var clash = other.some(function (k) { return examples(draft && draft[k]).some(function (x) { return sameLinkRule(x, part); }); });
+    if (clash) return { error: videoSide ? 'That title links to a performer page (' + part.linkPrefix + '…), not to a video. Pick the title of a video, or skip the video picks on a site without videos.' : 'These links (' + part.linkPrefix + '…) were picked as video titles; remove that "Video title in a list" example first if they are performer pages.' };
+    return part;
+  }
+  function derivePickRules(kind, el, draft) {
     var text = textOf(el), page = location.pathname;
     if (!text) return { error: 'That element has no text; click the name or title itself.' };
     // slugAt records how deep a slug sits below the prefix (undefined, and not stored, for the usual /prefix/<slug>).
@@ -1132,7 +1227,7 @@
     var card = structuralCard(a, selectorAttr(prefix), profileKey(setupHost(), prefix, key, slugAt)) || a.parentElement;
     var rel = card.contains(el) ? selectorFor(el, card) : '';
     // The card's own class, when it has a stable one shared by other cards, finds cards more reliably than structure.
-    var cardPart = selectorPart(card), cardSel = /^[a-z0-9]+\./.test(cardPart) && document.querySelectorAll(cardPart).length >= 2 ? cardPart : '';
+    var cardPart = selectorPart(card), cardSel = /^[a-z0-9]+[.[]/.test(cardPart) && document.querySelectorAll(cardPart).length >= 2 ? cardPart : '';
     if (kind === 'card') return { linkPrefix: prefix, titleSel: rel, cardSel: cardSel, key: key, slugAt: slugAt, sample: { page: page, link: u.pathname, title: text.slice(0, 120) } };
     // A name inside a video card is a performer link, not a model list entry: a page of videos is no model list (marking
     // it as one put performer badges on the video cards).
@@ -1273,17 +1368,20 @@
   }
   function openSetup(fromMenu) {
     var st = setupState();
-    if (!st.draft || validProfile(st.draft)) st.draft = JSON.parse(JSON.stringify((site && site.profile) || { v: 1, host: setupHost() }));
+    // A draft that cannot be saved (a pick from before 4.5.0 with an overlong selector) is kept and named, so its picks
+    // are not lost without a word; only a draft without a usable host starts over.
+    var problem = st.draft ? validProfile(st.draft) : 'host missing';
+    if (problem === 'host missing' || st.draft.host !== setupHost()) { st.draft = JSON.parse(JSON.stringify((site && site.profile) || { v: 1, host: setupHost() })); problem = ''; }
     st.open = true;
     saveSetupState(st);
-    if (fromMenu) log('info', 'site onboarding', 'guide opened', { host: setupHost(), supported: !!site, builtIn: !!(site && !site.strictName) });
-    renderSetup(st, '');
+    if (fromMenu) log('info', 'site onboarding', 'guide opened', { host: setupHost(), supported: !!site, builtIn: !!(site && !site.strictName), problem: problem || undefined });
+    renderSetup(st, problem ? 'This draft cannot be saved yet (' + problem + '): remove that example (×) and pick it again.' : '');
   }
   function closeSetup() { stopPick(); var p = document.getElementById(SETUP_ID); if (p) p.remove(); var st = setupState(); st.open = false; saveSetupState(st); }
   function saveProfile(st) {
     var d = st.draft, err = validProfile(d);
     if (!err && !PICK_KINDS.some(function (k) { return examples(d[k]).length; })) err = 'pick at least one element first';
-    if (err) { renderSetup(st, 'Not saved: ' + err + '.'); return; }
+    if (err) { log('warn', 'site onboarding', 'not saved: ' + err, { host: d.host }); renderSetup(st, 'Not saved: ' + err + '.'); return; }
     d.v = 1;
     d.script = VERSION;
     d.updatedAt = new Date().toISOString();

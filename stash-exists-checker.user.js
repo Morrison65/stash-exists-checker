@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Stash Exists Checker - Reptyle
 // @namespace    local.stash-exists-checker
-// @version      4.5.1
-// @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, the Gamma members sites Adult Time and DFXtra, the Aylo network (Brazzers, BangBros, Reality Kings, ...), the Holed / Exotic4K / Passion HD / POVD members areas, Primal Fetish Network and Bluesky (performers only); any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
+// @version      4.6.0
+// @description  Shows what is already in local Stash (localhost:9999): a badge on video pages and cards, the Stash performer match with an add-URL button and Stash link on model pages, and in-Stash marks on models and videos. Built in: Reptyle, the Gamma members sites Adult Time and DFXtra, the Aylo network (Brazzers, BangBros, Reality Kings, ...), the Holed / Exotic4K / Passion HD / POVD members areas, Primal Fetish Network, Eporner and Bluesky (performers only); any other site can be set up from the Tampermonkey menu by picking the performer name and video titles on its pages.
 // @match        *://*/*
 // @updateURL    https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
 // @downloadURL  https://raw.githubusercontent.com/Morrison65/stash-exists-checker/master/stash-exists-checker.user.js
@@ -21,7 +21,7 @@
 
 (function () {
   'use strict';
-  const VERSION = '4.5.1';
+  const VERSION = '4.6.0';
   // One adapter per site or network: everything page-specific lives here, the core below is generic. Sites set up with the
   // picker are stored as JSON profiles and turned into the same adapter shape by profileSite (see "Site profiles" below).
   // hosts: page hosts the adapter runs on. detail/listing: model page paths.
@@ -35,6 +35,7 @@
   // sceneUrlParts: URL fragments that select this site's scenes in Stash; sceneKey/modelKey reduce a URL to the id both sides share.
   // scenePage/sceneTitleSel (optional): video page path and its title element; the page gets a badge from lookupVideo.
   // sceneTitleFromUrl (optional): the title from the video page URL when no title element is known; the badge then floats.
+  // sceneTitleText (optional): the title from the title element when its innerText holds more (eporner: length, quality).
   // cardTags (optional): every video card with a title gets a corner tag: IN STASH (by URL), IN STASH · TITLE, IN STASH · FILE or NOT IN STASH.
   // profileSince (optional): profiles of this host saved by an older script version are ignored (they were set up before
   // the adapter was built in, often with weaker selectors); a profile saved again with the guide applies.
@@ -157,7 +158,46 @@
     performerUrlParts: function (key) { return ['bsky.app/profile/' + key]; },
     cardTags: false,
     profileSince: '4.5.0'
+  }, {
+    // Eporner (onboarded with the guide in 4.4.0). Videos are /video-<id>/<slug>/, which is exactly what Stash holds, so
+    // the id (case-sensitive) is the key; performers are /pornstar/<slug>/ with tabs below (/recent/). Tag pages
+    // (/tag/<name>-<id>/<sort>/) are searches, not performer pages: the 4.4.0 profile took the sort tab as a performer id
+    // there and offered the tag page as performer URL. Language subdomains (fr., de., ...) are the same site. Titles end in
+    // " - <performer>" on the site and in Stash alike; the video page h1 also holds length and quality spans, so its title
+    // is the h1's own text.
+    id: 'eporner',
+    hosts: ['eporner.com'],
+    detail: /^\/pornstar\/[^/]+(?:\/|$)/,
+    listing: /(?!)/,
+    headingSel: '.psbio h1',
+    anchorSel: '',
+    headingFallbackSel: '.psbio h1',
+    videoCardSel: 'div.mb',
+    videoLinkSel: 'a[href*="/video-"]',
+    videoTitleSel: 'p.mbtit a',
+    modelLinkSel: 'a[href*="/pornstar/"]',
+    modelCardSel: '',
+    modelEntrySel: '',
+    modelNameSel: '',
+    sceneUrlParts: ['eporner.com/video-'],
+    sceneKey: epornerVideoId,
+    modelKey: epornerStar,
+    modelUrl: function (origin, key) { return 'https://www.eporner.com/pornstar/' + key + '/'; },
+    performerUrlRe: /^https?:\/\/(?:[a-z]{2,3}\.)?eporner\.com\//i,
+    performerUrlParts: function (key) { return ['eporner.com/pornstar/' + key + '/']; },
+    scenePage: /^\/video-[A-Za-z0-9]+(?:\/|$)/,
+    sceneTitleSel: '#video-info h1',
+    sceneTitleText: ownTextOf,
+    sceneTitleFromUrl: function (href) { var m = String(href || '').match(/\/video-[A-Za-z0-9]+\/([^/?#]+)/); return m ? slugWords(m[1]) : ''; },
+    cardTags: true,
+    profileSince: '4.6.0'
   }];
+  // Eporner hosts: eporner.com and its language subdomains (www., fr., ...).
+  function epornerUrl(href) { var u; try { u = new URL(String(href || ''), 'https://www.eporner.com'); } catch (e) { return null; } return /^(?:[a-z]{2,3}\.)?eporner\.com$/i.test(u.hostname) ? u : null; }
+  function epornerVideoId(href) { var u = epornerUrl(href), m = u && u.pathname.match(/^\/video-([A-Za-z0-9]+)(?:\/|$)/); return m ? m[1] : null; }
+  function epornerStar(href) { var u = epornerUrl(href), m = u && u.pathname.match(/^\/pornstar\/([^/?#]+)/i); return m ? m[1].toLowerCase() : null; }
+  // The element's own text, without its child elements (eporner's h1: title, then length and quality spans).
+  function ownTextOf(el) { return el ? Array.prototype.filter.call(el.childNodes, function (n) { return n.nodeType === 3; }).map(function (n) { return n.nodeValue; }).join('').replace(/\s+/g, ' ').trim() : ''; }
   // Bluesky profile key: the handle (or did:) of a bare /profile/<handle> link, lowercase; deeper links are no key.
   function blueskyHandle(href) {
     var u;
@@ -500,7 +540,7 @@
   const canonUrl = (u) => (u || '').split('?')[0].split('#')[0].trim();
   // Node unit tests load the pure helpers only (function declarations are hoisted); nothing else touches the page.
   if (typeof module === 'object' && module.exports) {
-    module.exports = { logPage: logPage, createLogSink: createLogSink, VERSION: VERSION, SITES: SITES, siteFor: siteFor, cachedList: cachedList, normUrl: normUrl, normTitle: normTitle, normName: normName, extractMovieId: extractMovieId, extractModelId: extractModelId, extractGammaSceneId: extractGammaSceneId, extractGammaActorId: extractGammaActorId, gammaNameFromUrl: gammaNameFromUrl, ayloId: ayloId, ayloNameFromUrl: ayloNameFromUrl, modelIdFromParam: modelIdFromParam, modelNameFromParam: modelNameFromParam, norm: norm, canonUrl: canonUrl, lookupVideo: lookupVideo, linkPrefixOf: linkPrefixOf, pathPatternOf: pathPatternOf, keyModeOf: keyModeOf, profileKey: profileKey, registrableDomain: registrableDomain, validProfile: validProfile, profileSite: profileSite, ayloTitleFromUrl: ayloTitleFromUrl, gammaTitleFromUrl: gammaTitleFromUrl, blueskyHandle: blueskyHandle, blueskyNameFromTitle: blueskyNameFromTitle, selectorProblem: selectorProblem, sameLinkRule: sameLinkRule };
+    module.exports = { logPage: logPage, createLogSink: createLogSink, VERSION: VERSION, SITES: SITES, siteFor: siteFor, cachedList: cachedList, normUrl: normUrl, normTitle: normTitle, normName: normName, extractMovieId: extractMovieId, extractModelId: extractModelId, extractGammaSceneId: extractGammaSceneId, extractGammaActorId: extractGammaActorId, gammaNameFromUrl: gammaNameFromUrl, ayloId: ayloId, ayloNameFromUrl: ayloNameFromUrl, modelIdFromParam: modelIdFromParam, modelNameFromParam: modelNameFromParam, norm: norm, canonUrl: canonUrl, lookupVideo: lookupVideo, linkPrefixOf: linkPrefixOf, pathPatternOf: pathPatternOf, keyModeOf: keyModeOf, profileKey: profileKey, registrableDomain: registrableDomain, validProfile: validProfile, profileSite: profileSite, ayloTitleFromUrl: ayloTitleFromUrl, gammaTitleFromUrl: gammaTitleFromUrl, blueskyHandle: blueskyHandle, blueskyNameFromTitle: blueskyNameFromTitle, epornerVideoId: epornerVideoId, epornerStar: epornerStar, selectorProblem: selectorProblem, sameLinkRule: sameLinkRule };
     return;
   }
   // Runs on every page. Other sites only get the setup guide in the Tampermonkey menu: no requests, no logs, no observer
@@ -961,7 +1001,8 @@
     // title comes from the URL and the badge floats in the shared dock.
     const h1 = site.sceneTitleSel ? q(site.sceneTitleSel) : null;
     if (site.sceneTitleSel && !h1 && !site.sceneTitleFromUrl) return;
-    const currentTitle = () => (h1 ? (q(site.sceneTitleSel)?.innerText || '').trim() : site.sceneTitleFromUrl ? site.sceneTitleFromUrl(location.pathname) : '');
+    const titleText = (el) => (site.sceneTitleText ? site.sceneTitleText(el) : (el?.innerText || '').trim());
+    const currentTitle = () => (h1 ? titleText(q(site.sceneTitleSel)) : site.sceneTitleFromUrl ? site.sceneTitleFromUrl(location.pathname) : '');
     const title = currentTitle();
     const cleanUrl = canonUrl(location.href);
     if (!title) return;

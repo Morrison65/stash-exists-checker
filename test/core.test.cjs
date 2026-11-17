@@ -47,7 +47,8 @@ test('adapters are complete and ids are unique', () => {
         for (const f of selectors) assert.equal(typeof s[f], 'string', s.id + ' needs ' + f + ' (may be empty)');
         if (s.modelParam) assert.equal(typeof s.performerUrlParts, 'function', s.id + ' filters by model id but cannot look it up');
         assert.equal(typeof s.anchorSel, 'string', s.id + ' needs anchorSel (empty for a floating panel)');
-        assert.ok(s.anchorSel || s.nameFromUrl || s.nameFromTitle, s.id + ' needs an anchor, nameFromUrl or nameFromTitle to find the name');
+        // A floating panel needs a reliable name: from the URL, the title, or a specific heading (not any h1).
+        assert.ok(s.anchorSel || s.nameFromUrl || s.nameFromTitle || /[.#[]/.test(s.headingSel), s.id + ' needs an anchor, nameFromUrl, nameFromTitle or a specific headingSel to find the name');
     }
     assert.equal(new Set(SITES.map(s => s.id)).size, SITES.length);
 });
@@ -234,6 +235,22 @@ test('setup picks: selectors too long to store and video rules that are performe
     assert.ok(!sameLinkRule(perf, { linkPrefix: '/video/', key: 'slug' }));
     assert.ok(!sameLinkRule(perf, { linkPrefix: '/profile/', key: 'id' }));
 });
+test('eporner: video ids, performer slugs, tag pages are no performer pages', () => {
+    const s = siteFor('www.eporner.com');
+    assert.equal(s.id, 'eporner');
+    assert.equal(siteFor('fr.eporner.com').id, 'eporner');
+    // The only shape in the local library (105 scenes): https://www.eporner.com/video-<id>/<slug>/; ids are case-sensitive.
+    for (const u of ['https://www.eporner.com/video-AbC12dEfGhI/some-title/', '/video-AbC12dEfGhI/some-title/', 'https://fr.eporner.com/video-AbC12dEfGhI/', 'https://www.eporner.com/video-AbC12dEfGhI//']) assert.equal(s.sceneKey(u), 'AbC12dEfGhI', u);
+    for (const u of ['/pornstar/jane-doe/', '/tag/jane-doe-AbC12dEf/recent/', 'https://other.example/video-AbC12dEfGhI/x/']) assert.equal(s.sceneKey(u), null, u);
+    for (const u of ['/pornstar/jane-doe/', '/pornstar/Jane-Doe/recent/', 'https://www.eporner.com/pornstar/jane-doe/']) assert.equal(s.modelKey(u), 'jane-doe', u);
+    // 4.4.0 profile: the sort tab of a tag page was the performer id and the tag page the performer URL.
+    for (const u of ['/tag/jane-doe-AbC12dEf/recent/', 'https://www.eporner.com/tag/jane-doe-AbC12dEf/recent', '/profile/uploader/', '/video-AbC12dEfGhI/x/']) assert.equal(s.modelKey(u), null, u);
+    assert.ok(s.detail.test('/pornstar/jane-doe/') && s.detail.test('/pornstar/jane-doe/recent/') && !s.detail.test('/tag/jane-doe-AbC12dEf/top-monthly/'));
+    assert.ok(s.scenePage.test('/video-AbC12dEfGhI/some-title/') && !s.scenePage.test('/pornstar/jane-doe/recent/'));
+    assert.equal(s.modelUrl('https://fr.eporner.com', 'jane-doe'), 'https://www.eporner.com/pornstar/jane-doe/');
+    assert.equal(s.sceneTitleFromUrl('/video-AbC12dEfGhI/some-title-here/'), 'some title here');
+    assert.ok(s.performerUrlRe.test('https://www.eporner.com/pornstar/jane-doe/'));
+});
 // URL shapes read from the local Stash library (performer and scene URLs of the onboarded sites), slugs replaced.
 test('every URL shape Stash holds for the Nuxt members areas keys like the members links', () => {
     const s = siteFor('povd.com');
@@ -381,8 +398,8 @@ test('the video badge needs a known video page; card tags run on every built-in 
     assert.equal(r.sceneTitleSel, 'h1');
     assert.equal(r.cardTags, true);
     // (every video page needs a title element or a title from the URL; checked below)
-    assert.deepEqual(SITES.filter(s => s.scenePage).map(s => s.id), ['reptyle', 'adulttime', 'dfxtra', 'aylo', 'holed', 'exotic4k', 'passionhd', 'povd', 'primalfetish']);
-    assert.deepEqual(SITES.filter(s => s.sceneTitleSel).map(s => s.id), ['reptyle', 'holed', 'exotic4k', 'passionhd', 'povd', 'primalfetish'], 'elsewhere the title comes from the URL until one is picked');
+    assert.deepEqual(SITES.filter(s => s.scenePage).map(s => s.id), ['reptyle', 'adulttime', 'dfxtra', 'aylo', 'holed', 'exotic4k', 'passionhd', 'povd', 'primalfetish', 'eporner']);
+    assert.deepEqual(SITES.filter(s => s.sceneTitleSel).map(s => s.id), ['reptyle', 'holed', 'exotic4k', 'passionhd', 'povd', 'primalfetish', 'eporner'], 'elsewhere the title comes from the URL until one is picked');
     for (const s of SITES) if (s.scenePage && !s.sceneTitleSel) assert.equal(typeof s.sceneTitleFromUrl, 'function', s.id + ' needs a title source');
     const at = siteFor('members.adulttime.com');
     assert.ok(at.scenePage.test('/en/video/mommysboy/Be-Polite-To-Our-Guest-Young-Man/209586'));

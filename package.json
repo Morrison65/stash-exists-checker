@@ -1,14 +1,15 @@
 {
   "name": "stash-exists-checker",
-  "version": "4.5.1",
+  "version": "4.6.0",
   "private": true,
-  "description": "Tampermonkey userscript: shows what is already in local Stash on any site (built in: Reptyle, Adult Time, the Aylo network; others via the setup guide): video badges and card tags, performer match with add-URL button, in-Stash marks",
+  "description": "Tampermonkey userscript: shows what is already in local Stash on any site (built in: Reptyle, Adult Time, the Aylo network, Eporner, Bluesky and more; others via the setup guide): video badges and card tags, performer match with add-URL button, in-Stash marks",
   "scripts": {
     "lint": "node tools/lint-tampermonkey.cjs",
     "test": "node --test test/core.test.cjs",
     "test:browser": "node test/browser.cjs",
     "version-bump": "node tools/check-version-bump.cjs",
-    "check": "npm run lint && npm test && npm run test:browser && npm run version-bump",
+    "sites": "node tools/onboarded-sites.cjs",
+    "check": "npm run sites && npm run lint && npm test && npm run test:browser && npm run version-bump",
     "lint:ci": "node tools/lint-ci.cjs",
     "check:ci": "npm run lint:ci && npm test && npm run version-bump"
   }

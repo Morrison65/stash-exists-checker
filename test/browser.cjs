@@ -62,7 +62,7 @@ window.GM_xmlhttpRequest = function (o) {
   else if (/performer_filter:\\{url/.test(q)) { __log.push('byurl:' + v.u); const ps = PERFS.filter(p => p.urls.some(u => u.includes(v.u))); data = { findPerformers: { performers: JSON.parse(JSON.stringify(ps)) } }; }
   else if (/findPerformers\\(filter:\\{q:/.test(q)) { const n = v.q.toLowerCase(); const ps = PERFS.filter(p => [p.name].concat(p.alias_list).some(x => x.toLowerCase().includes(n))); data = { findPerformers: { count: ps.length, performers: JSON.parse(JSON.stringify(ps)) } }; }
   else if (/findPerformers/.test(q)) { __log.push('perfs:' + v.p); data = { findPerformers: { count: PERFS.length, performers: JSON.parse(JSON.stringify(PERFS)) } }; }
-  else if (/url:\\{value:\\$h/.test(q)) { __log.push('scenes:' + v.h + ':' + v.p); data = { findScenes: { scenes: v.h === 'holed.com/' ? [{ id: '80', title: 'Stash Title Differs', urls: ['https://holed.com/video/some-scene'] }] : v.h === 'primalfetishnetwork.com/' ? [{ id: '81', title: 'Old Primal Title', urls: ['https://primalfetishnetwork.com/updates/Some-Primal-Scene.html'] }] : v.h === 'newsite.example' ? SCENES.filter(s => s.urls.some(u => u.includes(v.h))) : v.m === 'MATCHES_REGEX' && /bangbros/.test(v.h) ? [{ id: '70', title: 'BZ Cross', urls: ['https://bangbros.com/video/9001/bz-cross'] }] : v.h === '/en/video/' ? [{ id: '60', title: 'Cross Site', urls: ['https://www.evilangel.com/en/video/evilangel/Cross-Site/209586'] }] : [{ id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }] } }; }
+  else if (/url:\\{value:\\$h/.test(q)) { __log.push('scenes:' + v.h + ':' + v.p); data = { findScenes: { scenes: v.h === 'holed.com/' ? [{ id: '80', title: 'Stash Title Differs', urls: ['https://holed.com/video/some-scene'] }] : v.h === 'eporner.com/video-' ? [{ id: '82', title: 'Ep Title - Jane Doe', urls: ['https://www.eporner.com/video-AbC12dEfGhI/ep-title/'] }] : v.h === 'primalfetishnetwork.com/' ? [{ id: '81', title: 'Old Primal Title', urls: ['https://primalfetishnetwork.com/updates/Some-Primal-Scene.html'] }] : v.h === 'newsite.example' ? SCENES.filter(s => s.urls.some(u => u.includes(v.h))) : v.m === 'MATCHES_REGEX' && /bangbros/.test(v.h) ? [{ id: '70', title: 'BZ Cross', urls: ['https://bangbros.com/video/9001/bz-cross'] }] : v.h === '/en/video/' ? [{ id: '60', title: 'Cross Site', urls: ['https://www.evilangel.com/en/video/evilangel/Cross-Site/209586'] }] : [{ id: '50', title: 'Hit By Url', urls: ['https://app.reptyle.com/movies/100?r=x'] }] } }; }
   else if (/performers:\\{value:\\[217\\]/.test(q)) data = { findScenes: { count: 1, scenes: [{ id: '61', title: 'Title Match AT', urls: [] }] } };
   else if (/performers:\\{value/.test(q)) data = { findScenes: { count: 1, scenes: [{ id: '51', title: 'Hit By Title', urls: [] }] } };
   else if (/scene_filter:\\$sf/.test(q) && v.sf.title) { __log.push('lookup:t:' + v.sf.title.value); const ss = SCENES.filter(s => s.title.toLowerCase() === v.sf.title.value.toLowerCase()); data = { findScenes: { count: ss.length, scenes: ss } }; }
@@ -116,6 +116,15 @@ function bsPage(p) {
   // The title names the open profile; on /profile/other.example.social it still names the previous one.
   return `<!doctype html><html><head><title>Jane Doe💙 (@jane.example.social) — Bluesky</title></head><body><div id="root">${bsScreen('old.example.social', 'Old Person', true)}${bsScreen(p.split('/')[2], 'Jane Doe💙', false)}</div><script>${stub()}</script><script>${source}</script></body></html>`;
 }
+// Eporner: plain classes, /video-<id>/<slug>/ cards with an uploader link, a pornstar page with tabs, and a video page whose
+// h1 holds the title plus length and quality spans (markup from the onboarding log and a live public page).
+const epCard = (id, slug, t) => `<div class="mb" data-id="1" id="vf1"><div class="mbimg"><div class="mbcontent"><a href="/video-${id}/${slug}/"><img alt="${t}"></a></div></div><div class="mbunder"><p class="mbtit"><a href="/video-${id}/${slug}/">${t}</a></p><p class="mbstats"><span class="mbtim">28:03</span><span class="mb-uploader"><a href="/profile/uploader/">uploader</a></span></p></div></div>`;
+function epPage(p) {
+  const grid = `<div id="vidresults">${epCard('AbC12dEfGhI', 'ep-title', 'Ep Title - Jane Doe')}${epCard('ZzZ98yYxXwV', 'nothing-ep-here', 'Nothing Ep Here - Jane Doe')}</div>`;
+  const body = p.startsWith('/video-') ? `<div id="movieplayer-left"><div id="video-info"><h1 style="font-size:1.65em;">Ep Title - Jane Doe <span class="vid-length">28min</span><span class="vid-quality">1080p</span></h1><div id="video-info-tags"><ul><li class="vit-pornstar starw"><a href="/pornstar/jane-doe/">Jane Doe</a></li></ul></div></div></div>${grid}`
+    : `<div class="psbio ps1"><h1>Jane Doe</h1></div><div id="toptopbel"><h2>Jane Doe Porn Videos</h2></div><a href="/pornstar/jane-doe/recent/">Recent</a>${grid}`;
+  return `<!doctype html><html><head><title>EPORNER</title></head><body><div id="content"><main>${body}</main></div><script>${stub()}</script><script>${source}</script></body></html>`;
+}
 // A site the script does not know: two h1s (logo and performer name), cards whose title sits beside the links, and a
 // click handler that must never see a pick.
 const NS = 'members.newsite.example';
@@ -132,6 +141,7 @@ function page(p, host, search) {
   if (host === 'holed.com') return nxPage(p);
   if (host === 'primalfetishnetwork.com') return pfPage(p);
   if (host === 'bsky.app') return bsPage(p);
+  if (host === 'www.eporner.com') return epPage(p);
   let body;
   if (p === '/models') body = `<h1>Models</h1>${model(1, 'Jane Doe')}${model(2, 'Alias Girl')}${model(3, 'Nobody Here')}`;
   else if (p === '/models/2') body = `<div class="model-name-container"><h2>Alias Girl</h2></div>`;
@@ -157,7 +167,7 @@ async function connect(url) {
     pg = await connect(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
     pg.on('Fetch.requestPaused', async ev => {
       const u = new URL(ev.request.url);
-      if (!['app.reptyle.com', 'members.adulttime.com', 'site-ma.brazzers.com', 'holed.com', 'primalfetishnetwork.com', 'bsky.app', NS].includes(u.hostname) || /\.(png|ico)$/.test(u.pathname)) return pg.send('Fetch.failRequest', { requestId: ev.requestId, errorReason: 'BlockedByClient' });
+      if (!['app.reptyle.com', 'members.adulttime.com', 'site-ma.brazzers.com', 'holed.com', 'primalfetishnetwork.com', 'bsky.app', 'www.eporner.com', NS].includes(u.hostname) || /\.(png|ico)$/.test(u.pathname)) return pg.send('Fetch.failRequest', { requestId: ev.requestId, errorReason: 'BlockedByClient' });
       pg.send('Fetch.fulfillRequest', { requestId: ev.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'text/html; charset=utf-8' }], body: Buffer.from(page(u.pathname, u.hostname, u.search)).toString('base64') });
     });
     await pg.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
@@ -511,6 +521,26 @@ async function connect(url) {
     await pause(1500);
     assert.equal(await ev(panel), '');
 
+    // Eporner: a profile saved by 4.4.0 (tag page as performer page, the whole site as video pages) is ignored; the
+    // performer page finds the performer and marks its videos by id, tabs below it are the same performer.
+    gmStore['profiles:v1'] = { 'www.eporner.com': { v: 1, host: 'www.eporner.com', script: '4.4.0', model: [{ path: '^/tag/[^/]+/[^/]+(?:/|$)', nameSel: 'span.ep-ps-profile-name', linkPrefix: '/tag/', key: 'slug', slugAt: 2 }], video: [{ path: '^/[^/]+/[^/]+(?:/|$)', titleSel: 'h1', linkPrefix: '', key: 'slug', slugAt: 2 }] } };
+    await go('/pornstar/jane-doe/', 'www.eporner.com');
+    await wait(panel + '.includes("Videos on this page in Stash")');
+    assert.match(await ev(panel), /Found in Stash: Jane Doe \(id 7\)/);
+    assert.ok(await ev('__log.includes("byurl:eporner.com/pornstar/jane-doe/")'));
+    const epCards = '[...document.querySelectorAll("div.mb")].map(c=>c.querySelector(".stash-model-link-video-badge") ? "badge" : c.querySelector(".stash-exists-tag")?.getAttribute("data-stash-via") || "")';
+    await wait(epCards + '.join("|")==="badge|none"');
+    assert.equal(await ev('document.querySelector(".stash-model-link-video-badge").getAttribute("data-sml-key")'), '82');
+    assert.equal(await ev('!!document.getElementById("stash-exists-badge")'), false, 'a performer page is no video page');
+    assert.equal(await ev('!!document.querySelector("a[href=\\"/profile/uploader/\\"][data-sml-model]")'), false);
+    // Video page: the title is the h1's own text (no "28min1080p"), the badge goes after it, the performer link is marked.
+    await go('/video-AbC12dEfGhI/ep-title/', 'www.eporner.com');
+    await wait(badgeText + '==="In Stash #82 (url)"');
+    assert.equal(await ev('document.getElementById("stash-exists-badge").dataset.title'), 'Ep Title - Jane Doe');
+    assert.equal(await ev('document.getElementById("stash-exists-badge").previousElementSibling.tagName'), 'H1');
+    await wait('!!document.querySelector("a[href=\\"/pornstar/jane-doe/\\"][data-sml-model=\\"7\\"]")');
+    delete gmStore['profiles:v1'];
+
     // Unknown site: the script runs but stays inert (no Stash request, no log entry, nothing drawn) and only offers the
     // setup guide in the Tampermonkey menu.
     await go('/performer/555/jane-doe', NS);
@@ -612,6 +642,6 @@ async function connect(url) {
     await go('/watch/80001/ns-title', NS);
     await wait(badge + '==="In Stash #90 (url)"');
     console.log('browser test OK');
-  } catch (e) { console.error('browser test FAILED:', e.message); process.exitCode = 1; }
+  } catch (e) { console.error('browser test FAILED:', e.message, (e.stack.split('\n').find(l => l.includes('browser.cjs')) || '').trim()); process.exitCode = 1; }
   finally { pg?.close(); chrome.kill(); await pause(300); try { fs.rmSync(profile, { recursive: true, force: true }); } catch {} }
 })();
